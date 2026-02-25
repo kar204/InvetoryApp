@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -23,6 +24,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
+const SCRAP_CATEGORIES = ['Car Battery', 'Bike Battery', 'Inverter Battery', 'SMF'] as const;
 
 interface ScrapEntry {
   id: string;
@@ -71,7 +74,7 @@ export default function Scrap() {
     try {
       const { error } = await supabase.from('scrap_entries').insert({
         customer_name: form.customer_name.trim(),
-        scrap_item: form.scrap_item.trim(),
+        scrap_item: form.scrap_item,
         scrap_model: form.scrap_model.trim(),
         scrap_value: parseFloat(form.scrap_value) || 0,
         recorded_by: user.id,
@@ -122,7 +125,7 @@ export default function Scrap() {
       <TableHeader>
         <TableRow>
           <TableHead>Customer</TableHead>
-          <TableHead>Scrap Item</TableHead>
+          <TableHead>Category</TableHead>
           <TableHead>Model</TableHead>
           <TableHead className="text-right">Value (₹)</TableHead>
           <TableHead>Date</TableHead>
@@ -140,7 +143,7 @@ export default function Scrap() {
         ) : items.map(entry => (
           <TableRow key={entry.id}>
             <TableCell className="font-medium">{entry.customer_name}</TableCell>
-            <TableCell>{entry.scrap_item}</TableCell>
+            <TableCell><Badge variant="outline">{entry.scrap_item}</Badge></TableCell>
             <TableCell>{entry.scrap_model}</TableCell>
             <TableCell className="text-right">₹{entry.scrap_value.toLocaleString('en-IN')}</TableCell>
             <TableCell>{format(new Date(entry.created_at), 'dd/MM/yyyy')}</TableCell>
@@ -181,18 +184,25 @@ export default function Scrap() {
                     <Input value={form.customer_name} onChange={e => setForm({ ...form, customer_name: e.target.value })} required />
                   </div>
                   <div className="space-y-2">
-                    <Label>Scrap Item</Label>
-                    <Input value={form.scrap_item} onChange={e => setForm({ ...form, scrap_item: e.target.value })} required placeholder="e.g., Old Battery" />
+                    <Label>Scrap Category</Label>
+                    <Select value={form.scrap_item} onValueChange={v => setForm({ ...form, scrap_item: v })} required>
+                      <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+                      <SelectContent>
+                        {SCRAP_CATEGORIES.map(cat => (
+                          <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Scrap Model</Label>
+                    <Label>Model</Label>
                     <Input value={form.scrap_model} onChange={e => setForm({ ...form, scrap_model: e.target.value })} required />
                   </div>
                   <div className="space-y-2">
                     <Label>Scrap Value (₹)</Label>
                     <Input type="number" value={form.scrap_value} onChange={e => setForm({ ...form, scrap_value: e.target.value })} required min="0" />
                   </div>
-                  <Button type="submit" className="w-full">Record Entry</Button>
+                  <Button type="submit" className="w-full" disabled={!form.scrap_item}>Record Entry</Button>
                 </form>
               </DialogContent>
             </Dialog>

@@ -6,10 +6,10 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -29,11 +29,14 @@ interface ShopStockItem {
   };
 }
 
-interface SaleItem {
-  product_type: string;
+interface SaleCartItem {
   product_id: string;
+  product_name: string;
+  product_model: string;
+  product_type: string;
   price: string;
   quantity: number;
+  max_qty: number;
 }
 
 interface SaleRecord {
@@ -61,7 +64,9 @@ export default function Shop() {
   const [search, setSearch] = useState('');
   const [isSaleOpen, setIsSaleOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
-  const [saleItems, setSaleItems] = useState<SaleItem[]>([{ product_type: 'Battery', product_id: '', price: '', quantity: 1 }]);
+  const [saleRemarks, setSaleRemarks] = useState('');
+  const [saleProductSearch, setSaleProductSearch] = useState('');
+  const [saleCart, setSaleCart] = useState<SaleCartItem[]>([]);
   const [salesHistory, setSalesHistory] = useState<SaleRecord[]>([]);
 
   const canRecordSale = hasAnyRole(['admin', 'counter_staff', 'seller']);
@@ -84,7 +89,6 @@ export default function Shop() {
       const stockData = (stockRes.data as ShopStockItem[]) || [];
       setShopStock(stockData);
 
-      // Fetch sale items for each sale
       const sales = (salesRes.data as SaleRecord[]) || [];
       if (sales.length > 0) {
         const saleIds = sales.map(s => s.id);
@@ -111,31 +115,35 @@ export default function Shop() {
     }
   };
 
-  const addSaleItem = () => {
-    setSaleItems([...saleItems, { product_type: 'Battery', product_id: '', price: '', quantity: 1 }]);
-  };
-
-  const removeSaleItem = (index: number) => {
-    if (saleItems.length === 1) return;
-    setSaleItems(saleItems.filter((_, i) => i !== index));
-  };
-
-  const updateSaleItem = (index: number, field: keyof SaleItem, value: string | number) => {
-    const updated = [...saleItems];
-    (updated[index] as any)[field] = value;
-    // When product changes, auto-set the product_type
-    if (field === 'product_id') {
-      const stock = shopStock.find(s => s.product_id === value);
-      if (stock?.product?.category) {
-        updated[index].product_type = stock.product.category;
-      }
+  const addToCart = (stockItem: ShopStockItem) => {
+    if (saleCart.some(c => c.product_id === stockItem.product_id)) {
+      toast({ title: 'Product already added', variant: 'destructive' });
+      return;
     }
-    setSaleItems(updated);
+    setSaleCart([...saleCart, {
+      product_id: stockItem.product_id,
+      product_name: stockItem.product?.name || '',
+      product_model: stockItem.product?.model || '',
+      product_type: stockItem.product?.category || 'Battery',
+      price: '',
+      quantity: 1,
+      max_qty: stockItem.quantity,
+    }]);
+    setSaleProductSearch('');
   };
 
-  // Filter available stock by product type for the dropdown
-  const getAvailableProducts = (productType: string) => {
-    return shopStock.filter(s => s.product?.category === productType && s.quantity > 0);
+  const removeFromCart = (productId: string) => {
+    setSaleCart(saleCart.filter(c => c.product_id !== productId));
+  };
+
+  const updateCartItem = (productId: string, field: 'price' | 'quantity', value: string | number) => {
+    setSaleCart(saleCart.map(c => {
+      if (c.product_id !== productId) return c;
+      if (field === 'quantity') {
+        return { ...c, quantity: Math.max(1, Math.min(c.max_qty, value as number)) };
+      }
+      return { ...c, [field]: String(value) };
+    }));
   };
 
   const handleRecordSale = async (e: React.FormEvent) => {
@@ -144,9 +152,8 @@ export default function Shop() {
       toast({ title: 'Customer name is required', variant: 'destructive' });
       return;
     }
-    const validItems = saleItems.filter(item => item.product_id);
-    if (validItems.length === 0) {
-      toast({ title: 'Select at least one product', variant: 'destructive' });
+    if (saleCart.length === 0) {
+      toast({ title: 'Add at least one product', variant: 'destructive' });
       return;
     }
 
@@ -158,9 +165,8 @@ export default function Shop() {
         .single();
       if (saleError) throw saleError;
 
-      for (const item of validItems) {
-        const stockItem = shopStock.find(s => s.product_id === item.product_id);
-        const modelNumber = stockItem?.product ? `${stockItem.product.name} - ${stockItem.product.model}` : '';
+      for (const item of saleCart) {
+        const modelNumber = `${item.product_name} - ${item.product_model}`;
 
         const { error: itemError } = await supabase.from('shop_sale_items').insert({
           sale_id: sale.id,
@@ -172,7 +178,7 @@ export default function Shop() {
         });
         if (itemError) throw itemError;
 
-        // Deduct from shop stock
+        const stockItem = shopStock.find(s => s.product_id === item.product_id);
         if (stockItem) {
           await supabase.from('shop_stock')
             .update({ quantity: Math.max(0, stockItem.quantity - item.quantity) })
@@ -183,7 +189,9 @@ export default function Shop() {
       toast({ title: 'Sale recorded successfully' });
       setIsSaleOpen(false);
       setCustomerName('');
-      setSaleItems([{ product_type: 'Battery', product_id: '', price: '', quantity: 1 }]);
+      setSaleRemarks('');
+      setSaleCart([]);
+      setSaleProductSearch('');
       fetchData();
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'An error occurred';
@@ -199,6 +207,13 @@ export default function Shop() {
       (item.product?.name?.toLowerCase().includes(search.toLowerCase()) ||
        item.product?.model?.toLowerCase().includes(search.toLowerCase()))
     );
+
+  const filteredSaleProducts = shopStock.filter(s =>
+    s.quantity > 0 &&
+    !saleCart.some(c => c.product_id === s.product_id) &&
+    (s.product?.name?.toLowerCase().includes(saleProductSearch.toLowerCase()) ||
+     s.product?.model?.toLowerCase().includes(saleProductSearch.toLowerCase()))
+  );
 
   const renderStockTable = (items: ShopStockItem[]) => (
     <Table>
@@ -246,7 +261,10 @@ export default function Shop() {
             <p className="text-muted-foreground">Manage shop stock and record sales</p>
           </div>
           {canRecordSale && (
-            <Dialog open={isSaleOpen} onOpenChange={setIsSaleOpen}>
+            <Dialog open={isSaleOpen} onOpenChange={(open) => {
+              setIsSaleOpen(open);
+              if (!open) { setSaleProductSearch(''); setSaleCart([]); setSaleRemarks(''); setCustomerName(''); }
+            }}>
               <DialogTrigger asChild>
                 <Button>
                   <ShoppingCart className="h-4 w-4 mr-2" />
@@ -263,71 +281,81 @@ export default function Shop() {
                     <Input value={customerName} onChange={e => setCustomerName(e.target.value)} required />
                   </div>
 
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <Label>Items</Label>
-                      <Button type="button" variant="outline" size="sm" onClick={addSaleItem}>
-                        <Plus className="h-3 w-3 mr-1" /> Add Item
-                      </Button>
+                  {/* Searchable product picker */}
+                  <div className="space-y-2">
+                    <Label>Add Products</Label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        placeholder="Search products to add..."
+                        value={saleProductSearch}
+                        onChange={e => setSaleProductSearch(e.target.value)}
+                        className="pl-10"
+                      />
                     </div>
-                    {saleItems.map((item, idx) => (
-                      <div key={idx} className="border rounded-md p-3 space-y-3 relative">
-                        {saleItems.length > 1 && (
-                          <Button type="button" variant="ghost" size="icon" className="absolute top-1 right-1 h-6 w-6" onClick={() => removeSaleItem(idx)}>
-                            <X className="h-3 w-3" />
-                          </Button>
-                        )}
-                        <div className="space-y-1">
-                          <Label className="text-xs">Product Type</Label>
-                          <Select value={item.product_type} onValueChange={v => {
-                            updateSaleItem(idx, 'product_type', v);
-                            updateSaleItem(idx, 'product_id', '');
-                          }}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Battery">Battery</SelectItem>
-                              <SelectItem value="Inverter">Inverter</SelectItem>
-                              <SelectItem value="UPS">UPS</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Product (from stock)</Label>
-                          <Select value={item.product_id} onValueChange={v => updateSaleItem(idx, 'product_id', v)}>
-                            <SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger>
-                            <SelectContent>
-                              {getAvailableProducts(item.product_type).map(s => (
-                                <SelectItem key={s.product_id} value={s.product_id}>
-                                  {s.product?.name} - {s.product?.model} (Qty: {s.quantity})
-                                </SelectItem>
-                              ))}
-                              {getAvailableProducts(item.product_type).length === 0 && (
-                                <div className="px-2 py-1.5 text-sm text-muted-foreground">No stock available</div>
-                              )}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <Label className="text-xs">Price (Optional)</Label>
-                            <Input type="number" value={item.price} onChange={e => updateSaleItem(idx, 'price', e.target.value)} placeholder="₹" />
+                    {saleProductSearch && filteredSaleProducts.length > 0 && (
+                      <div className="max-h-[150px] overflow-y-auto border rounded-md">
+                        {filteredSaleProducts.map(s => (
+                          <button
+                            key={s.product_id}
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 flex justify-between items-center"
+                            onClick={() => addToCart(s)}
+                          >
+                            <span>{s.product?.name} - {s.product?.model}</span>
+                            <span className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-xs">{s.product?.category}</Badge>
+                              <span className="text-xs text-muted-foreground">Qty: {s.quantity}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {saleProductSearch && filteredSaleProducts.length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-2">No matching products in stock</p>
+                    )}
+                  </div>
+
+                  {/* Cart items */}
+                  {saleCart.length > 0 && (
+                    <div className="space-y-2 max-h-[300px] overflow-y-auto border rounded-md p-2">
+                      {saleCart.map(item => (
+                        <div key={item.product_id} className="flex items-center justify-between p-2 bg-muted/50 rounded-md gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm truncate">{item.product_name}</p>
+                            <p className="text-xs text-muted-foreground">{item.product_model}</p>
                           </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Quantity</Label>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              placeholder="₹"
+                              value={item.price}
+                              onChange={e => updateCartItem(item.product_id, 'price', e.target.value)}
+                              className="w-20 h-8 text-sm"
+                            />
                             <div className="flex items-center gap-1">
-                              <Button type="button" variant="outline" size="icon" className="h-8 w-8" onClick={() => updateSaleItem(idx, 'quantity', Math.max(1, item.quantity - 1))}>
+                              <Button type="button" variant="outline" size="icon" className="h-7 w-7" onClick={() => updateCartItem(item.product_id, 'quantity', item.quantity - 1)}>
                                 <Minus className="h-3 w-3" />
                               </Button>
-                              <Input type="number" min="1" value={item.quantity} onChange={e => updateSaleItem(idx, 'quantity', parseInt(e.target.value) || 1)} className="w-16 text-center h-8" />
-                              <Button type="button" variant="outline" size="icon" className="h-8 w-8" onClick={() => updateSaleItem(idx, 'quantity', item.quantity + 1)}>
+                              <span className="w-8 text-center text-sm font-medium">{item.quantity}</span>
+                              <Button type="button" variant="outline" size="icon" className="h-7 w-7" onClick={() => updateCartItem(item.product_id, 'quantity', item.quantity + 1)}>
                                 <Plus className="h-3 w-3" />
                               </Button>
                             </div>
+                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeFromCart(item.product_id)}>
+                              <X className="h-3 w-3" />
+                            </Button>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <Label>Remarks (Optional)</Label>
+                    <Textarea value={saleRemarks} onChange={e => setSaleRemarks(e.target.value)} />
                   </div>
+
                   <Button type="submit" className="w-full">Record Sale</Button>
                 </form>
               </DialogContent>
@@ -336,7 +364,7 @@ export default function Shop() {
         </div>
 
         {/* Stats */}
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
+        <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Total Shop Stock</CardTitle>
@@ -352,9 +380,15 @@ export default function Shop() {
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Inverter/UPS Stock</CardTitle>
+              <CardTitle className="text-sm font-medium">Inverter/UPS</CardTitle>
             </CardHeader>
             <CardContent><div className="text-2xl font-bold">{filterByCategory('Inverter').reduce((s, i) => s + i.quantity, 0) + filterByCategory('UPS').reduce((s, i) => s + i.quantity, 0)}</div></CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Trolley Stock</CardTitle>
+            </CardHeader>
+            <CardContent><div className="text-2xl font-bold">{filterByCategory('Trolley').reduce((s, i) => s + i.quantity, 0)}</div></CardContent>
           </Card>
         </div>
 
@@ -374,6 +408,7 @@ export default function Shop() {
               <TabsTrigger value="Battery">Batteries</TabsTrigger>
               <TabsTrigger value="Inverter">Inverters</TabsTrigger>
               <TabsTrigger value="UPS">UPS</TabsTrigger>
+              <TabsTrigger value="Trolley">Trolley</TabsTrigger>
               <TabsTrigger value="history">
                 <History className="h-3 w-3 mr-1" />
                 Sales History
@@ -393,6 +428,9 @@ export default function Shop() {
             </TabsContent>
             <TabsContent value="UPS">
               <Card><CardContent className="pt-6">{renderStockTable(filterByCategory('UPS'))}</CardContent></Card>
+            </TabsContent>
+            <TabsContent value="Trolley">
+              <Card><CardContent className="pt-6">{renderStockTable(filterByCategory('Trolley'))}</CardContent></Card>
             </TabsContent>
             <TabsContent value="history">
               <Card>

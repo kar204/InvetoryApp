@@ -39,6 +39,7 @@ export default function Inventory() {
   const [isStockTransferOpen, setIsStockTransferOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [transferProductSearch, setTransferProductSearch] = useState('');
 
   // Product form
   const [productForm, setProductForm] = useState({
@@ -57,7 +58,6 @@ export default function Inventory() {
   });
 
   const [transferItems, setTransferItems] = useState<{ productId: string; quantity: number }[]>([]);
-  const [selectedProductToAdd, setSelectedProductToAdd] = useState('');
 
   // Role-based restrictions
   const isWarehouseStaff = hasRole('warehouse_staff');
@@ -112,7 +112,6 @@ export default function Inventory() {
 
       if (productError) throw productError;
 
-      // Create initial stock entry with optional quantity
       const initialQty = parseInt(productForm.initialQuantity) || 0;
       const { error: stockError } = await supabase
         .from('warehouse_stock')
@@ -137,13 +136,11 @@ export default function Inventory() {
     if (!productToDelete) return;
     
     try {
-      // First delete the stock entry
       await supabase
         .from('warehouse_stock')
         .delete()
         .eq('product_id', productToDelete.id);
 
-      // Then delete the product
       const { error } = await supabase
         .from('products')
         .delete()
@@ -167,7 +164,7 @@ export default function Inventory() {
       return;
     }
     setTransferItems([...transferItems, { productId, quantity: 1 }]);
-    setSelectedProductToAdd('');
+    setTransferProductSearch('');
   };
 
   const removeProductFromTransfer = (productId: string) => {
@@ -202,9 +199,7 @@ export default function Inventory() {
     }
 
     try {
-      // Process all items
       for (const item of transferItems) {
-        // Create transaction record
         const { error: transError } = await supabase.from('stock_transactions').insert({
           product_id: item.productId,
           quantity: item.quantity,
@@ -216,7 +211,6 @@ export default function Inventory() {
 
         if (transError) throw transError;
 
-        // Update stock quantity
         const currentStock = stock.find(s => s.product_id === item.productId);
         const currentQty = currentStock?.quantity || 0;
         const newQty = transferForm.transaction_type === 'IN' 
@@ -323,6 +317,7 @@ export default function Inventory() {
   };
 
   const handleDownloadTemplate = () => {
+    // Include existing products + empty rows for new products
     const templateData = stock.map(item => ({
       'Product ID': item.product_id,
       'Product Name': item.product?.name || '',
@@ -332,11 +327,23 @@ export default function Inventory() {
       'Current Quantity': item.quantity,
       'New Quantity': item.quantity,
     }));
+    // Add 5 blank rows for new products
+    for (let i = 0; i < 5; i++) {
+      templateData.push({
+        'Product ID': '' as any,
+        'Product Name': '',
+        'Model': '',
+        'Category': '',
+        'Capacity': '',
+        'Current Quantity': '' as any,
+        'New Quantity': '' as any,
+      });
+    }
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inventory');
     XLSX.writeFile(wb, `inventory-template-${new Date().toISOString().split('T')[0]}.xlsx`);
-    toast({ title: 'Template downloaded', description: 'Edit the "New Quantity" column and re-upload' });
+    toast({ title: 'Template downloaded', description: 'Edit quantities for existing products OR fill Name/Model/Category to add new ones (leave Product ID blank for new)' });
   };
 
   const handleBulkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -350,20 +357,52 @@ export default function Inventory() {
       const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
 
       let updated = 0;
+      let created = 0;
+
       for (const row of rows) {
-        const productId = row['Product ID'];
+        const productId = row['Product ID']?.toString().trim();
         const newQty = parseInt(row['New Quantity']);
-        if (!productId || isNaN(newQty) || newQty < 0) continue;
+        const productName = row['Product Name']?.toString().trim();
+        const model = row['Model']?.toString().trim();
+        const category = row['Category']?.toString().trim();
+        const capacity = row['Capacity']?.toString().trim() || null;
 
-        const { error } = await supabase
-          .from('warehouse_stock')
-          .update({ quantity: newQty })
-          .eq('product_id', productId);
+        // Mode 1: Update existing product stock
+        if (productId && !isNaN(newQty) && newQty >= 0) {
+          const { error } = await supabase
+            .from('warehouse_stock')
+            .update({ quantity: newQty })
+            .eq('product_id', productId);
+          if (!error) updated++;
+          continue;
+        }
 
-        if (!error) updated++;
+        // Mode 2: Create new product if Name, Model, Category are filled
+        if (!productId && productName && model && category) {
+          const qty = !isNaN(newQty) && newQty >= 0 ? newQty : 0;
+          const { data: newProduct, error: productError } = await supabase
+            .from('products')
+            .insert({ name: productName, model, category, capacity })
+            .select()
+            .single();
+
+          if (productError) {
+            console.error('Error creating product:', productError);
+            continue;
+          }
+
+          const { error: stockError } = await supabase
+            .from('warehouse_stock')
+            .insert({ product_id: newProduct.id, quantity: qty });
+
+          if (!stockError) created++;
+        }
       }
 
-      toast({ title: 'Bulk update complete', description: `Updated ${updated} of ${rows.length} items` });
+      const parts = [];
+      if (updated > 0) parts.push(`Updated ${updated} items`);
+      if (created > 0) parts.push(`Created ${created} new products`);
+      toast({ title: 'Bulk import complete', description: parts.join('. ') || 'No changes made' });
       fetchData();
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'An error occurred';
@@ -377,7 +416,6 @@ export default function Inventory() {
   const canManageStock = hasAnyRole(['admin', 'warehouse_staff', 'procurement_staff']);
   const canDeleteProducts = hasRole('admin');
 
-  // Get available transaction types and sources based on role
   const getTransactionOptions = () => {
     if (isAdmin) {
       return {
@@ -389,27 +427,29 @@ export default function Inventory() {
         ]
       };
     }
-    
     if (isWarehouseStaff) {
-      // Warehouse: OUT only, from WAREHOUSE to SHOP
       return {
         types: [{ value: 'OUT', label: 'Stock Out' }],
         sources: [{ value: 'SHOP', label: 'Shop' }]
       };
     }
-    
     if (isProcurementStaff) {
-      // Procurement: IN only, from SUPPLIER to WAREHOUSE
       return {
         types: [{ value: 'IN', label: 'Stock In' }],
         sources: [{ value: 'SUPPLIER', label: 'Supplier (OEM)' }]
       };
     }
-    
     return { types: [], sources: [] };
   };
 
   const transactionOptions = getTransactionOptions();
+
+  // Filtered products for transfer search
+  const filteredTransferProducts = products.filter(p =>
+    !transferItems.some(item => item.productId === p.id) &&
+    (p.name.toLowerCase().includes(transferProductSearch.toLowerCase()) ||
+     p.model.toLowerCase().includes(transferProductSearch.toLowerCase()))
+  );
 
   return (
     <AppLayout>
@@ -473,6 +513,7 @@ export default function Inventory() {
                           <SelectItem value="Battery">Battery</SelectItem>
                           <SelectItem value="Inverter">Inverter</SelectItem>
                           <SelectItem value="UPS">UPS</SelectItem>
+                          <SelectItem value="Trolley">Trolley</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -515,7 +556,10 @@ export default function Inventory() {
               </Dialog>
             )}
             {canManageStock && transactionOptions.types.length > 0 && (
-              <Dialog open={isStockTransferOpen} onOpenChange={setIsStockTransferOpen}>
+              <Dialog open={isStockTransferOpen} onOpenChange={(open) => {
+                setIsStockTransferOpen(open);
+                if (!open) setTransferProductSearch('');
+              }}>
                 <DialogTrigger asChild>
                   <Button>
                     <Package className="h-4 w-4 mr-2" />
@@ -576,21 +620,33 @@ export default function Inventory() {
 
                     <div className="space-y-2">
                       <Label>Add Products</Label>
-                      <Select 
-                        value={selectedProductToAdd} 
-                        onValueChange={addProductToTransfer}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select product to add" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {products.map((product) => (
-                            <SelectItem key={product.id} value={product.id}>
-                              {product.name} - {product.model}
-                            </SelectItem>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          placeholder="Search products to add..."
+                          value={transferProductSearch}
+                          onChange={(e) => setTransferProductSearch(e.target.value)}
+                          className="pl-10"
+                        />
+                      </div>
+                      {transferProductSearch && filteredTransferProducts.length > 0 && (
+                        <div className="max-h-[150px] overflow-y-auto border rounded-md">
+                          {filteredTransferProducts.map(product => (
+                            <button
+                              key={product.id}
+                              type="button"
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 flex justify-between items-center"
+                              onClick={() => addProductToTransfer(product.id)}
+                            >
+                              <span>{product.name} - {product.model}</span>
+                              <Badge variant="outline" className="text-xs">{(product as any).category}</Badge>
+                            </button>
                           ))}
-                        </SelectContent>
-                      </Select>
+                        </div>
+                      )}
+                      {transferProductSearch && filteredTransferProducts.length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-2">No matching products</p>
+                      )}
                     </div>
 
                     {transferItems.length > 0 && (
@@ -682,6 +738,7 @@ export default function Inventory() {
               <TabsTrigger value="Battery">Batteries ({filterByCategory('Battery').length})</TabsTrigger>
               <TabsTrigger value="Inverter">Inverters ({filterByCategory('Inverter').length})</TabsTrigger>
               <TabsTrigger value="UPS">UPS ({filterByCategory('UPS').length})</TabsTrigger>
+              <TabsTrigger value="Trolley">Trolley ({filterByCategory('Trolley').length})</TabsTrigger>
             </TabsList>
             <TabsContent value="all">
               <Card><CardHeader><CardTitle>All Stock</CardTitle></CardHeader><CardContent>{renderStockTable(filteredStock)}</CardContent></Card>
@@ -694,6 +751,9 @@ export default function Inventory() {
             </TabsContent>
             <TabsContent value="UPS">
               <Card><CardHeader><CardTitle>UPS</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('UPS'))}</CardContent></Card>
+            </TabsContent>
+            <TabsContent value="Trolley">
+              <Card><CardHeader><CardTitle>Trolley</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('Trolley'))}</CardContent></Card>
             </TabsContent>
           </Tabs>
         )}
