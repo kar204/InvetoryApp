@@ -1,84 +1,79 @@
 
 
-# Plan: Multi-product Forms, Search, Trolley Category, Bulk Import Fix, and Scrap Overhaul
+# Plan: Enhanced Dashboard, Inventory Defaults, Shop Sales History, and Scrap Improvements
 
-## 1. Add "Trolley" as a new product category
+## 1. Enhanced Dashboard - Full Business Overview
 
-**Database migration:**
-- No enum change needed (category is a text column on `products` table), so "Trolley" just needs to be added in UI dropdowns.
+The current dashboard only shows ticket stats and warehouse low-stock alerts. It needs to show a complete picture for a shop owner.
 
-**UI updates across all pages:**
-- Add `<SelectItem value="Trolley">Trolley</SelectItem>` in:
-  - Inventory: Add Product form category selector (line ~473)
-  - Inventory: Tab filters (add Trolley tab)
-  - Shop: Sale form product type selector (line ~288-291)
-  - Shop: Tab filters and stats cards
-  - Shop: Stats card for Trolley stock
+**New stats/sections to add to `src/pages/Dashboard.tsx`:**
+- **Shop Stats**: Total shop stock, today's sales count, today's sales revenue
+- **Warehouse Stats**: Total warehouse stock (already there), recent stock-in/stock-out counts
+- **Scrap Stats**: Scrap items in stock, total scrap value (IN)
+- **Service Stats**: Already present (open, in-progress, closed today)
 
-## 2. Add search/filter in product selection dropdowns
+**Data fetching additions:**
+- Query `shop_stock` for total shop inventory
+- Query `shop_sales` + `shop_sale_items` for today's sales count and revenue
+- Query `scrap_entries` for scrap in-stock count and value
+- Query `stock_transactions` for today's stock movements
 
-Both the **Inventory Stock Transfer** form and **Shop Record Sale** form currently use plain `<Select>` dropdowns for choosing products. These will be replaced with a searchable input pattern:
+**Layout**: Reorganize the overview banner into sections: Service, Inventory, Shop, Scrap -- giving a holistic view.
 
-- Add a text `<Input>` filter field above each product selector dropdown
-- Filter the product list in real-time as the user types
-- This applies to:
-  - **Inventory** > Stock Transfer > "Add Products" dropdown (line ~579)
-  - **Shop** > Record Sale > Product selector per item (line ~296)
+## 2. Inventory - Default Stock In to Warehouse, Stock Out to Shop
 
-Implementation: Add a local `productSearch` state. Render an `<Input>` for searching, then a scrollable list of matching products as clickable items (similar to a combobox pattern). This avoids adding new dependencies.
+In `src/pages/Inventory.tsx`, the Stock Transfer form currently leaves transaction_type and source blank by default.
 
-## 3. Redesign Shop "Record Sale" form to match Inventory transfer pattern
+**Changes:**
+- Set `transferForm` initial state to `{ transaction_type: 'IN', source: 'WAREHOUSE' }` for Stock In
+- When user selects "Stock In", auto-set source to "WAREHOUSE" (destination is warehouse)
+- When user selects "Stock Out", auto-set source to "SHOP" (destination is shop)
+- For role-restricted users (warehouse_staff, procurement_staff), auto-fill both fields on dialog open since they only have one option each
 
-Currently each sale item is a separate card with dropdowns. Redesign to match the reference image:
+## 3. Shop - Sales History with Item Details
 
-- Single product selector with search at the top (select product to add)
-- Products appear as a list below with name/model, quantity +/- controls, and remove (X) button
-- Keep customer name, price per item, and quantity controls
-- Add Remarks (Optional) textarea
-- "Record Sale" button at bottom
+The current Sales History table shows Date, Customer, Items (as badges), and Total. The user wants to see individual item model and quantity more clearly.
 
-## 4. Fix Bulk Import to support new products (not just quantity updates)
+**Changes to `src/pages/Shop.tsx` Sales History tab:**
+- Add columns: "Items", "Model", "Qty" or restructure the Items column to show each item on its own row with model_number and quantity clearly displayed
+- Use a sub-row or expanded detail approach: each sale row shows the items as a mini-table beneath
 
-Current issue: Bulk upload only updates existing `warehouse_stock` rows by `Product ID`. Users can't add new products via Excel because IDs are auto-generated UUIDs.
+## 4. Scrap Form - Add Quantity Field, Make Value Optional
 
-**Solution:**
-- Change the bulk import logic to support **two modes**:
-  1. **Update existing**: If `Product ID` column has a value, update quantity (current behavior)
-  2. **Add new products**: If `Product ID` is empty but `Product Name`, `Model`, and `Category` are filled, insert a new product + warehouse_stock row
-- Update the template to include a note/instruction row or clearly label which columns are required for new products
-- Auto-generate UUIDs server-side (Supabase handles this via `gen_random_uuid()`)
+**Database migration needed:**
+- Add `quantity` column (integer, default 1, not null) to `scrap_entries` table
 
-## 5. Overhaul Scrap module with proper categories and transaction tracking
+**Changes to `src/pages/Scrap.tsx`:**
+- Add a "Quantity" number input field to the Record Scrap form
+- Make the "Scrap Value" field optional (remove `required`, allow empty/0)
+- Update the ScrapEntry interface to include `quantity`
+- Show quantity in the scrap tables
+- Update stats to reflect quantities
 
-**Scrap categories** (replace free-text `scrap_item` with structured categories):
-- Car Battery
-- Bike Battery
-- Inverter Battery
-- SMF Battery
+## 5. Scrap Transactions - Record Both IN and OUT in Transaction History
 
-**UI changes to Scrap page:**
-- Replace the free-text "Scrap Item" input with a `<Select>` dropdown containing the 4 categories above
-- Keep `scrap_model` as free text for the specific model
-- Keep IN/OUT tabs as they are
-- Add scrap transactions to the **Transactions page** as a sub-module tab
+Currently, the Transactions page just reads from `scrap_entries` and shows their current status. The user wants both the "mark in" (creation) and "mark out" events to appear as separate transaction records.
 
-**Transactions page updates:**
-- Add tabs: "Stock Transactions" (existing) | "Scrap Transactions" (new)
-- Scrap Transactions tab shows all scrap entries with IN/OUT status, dates, values, and who recorded them
+**Approach:** Instead of a separate transactions table, enhance the Transactions page scrap tab to show:
+- All entries with status "IN" as an IN transaction (using `created_at` as the date)
+- All entries with status "OUT" shown TWICE: once as IN (created_at) and once as OUT (marked_out_at)
 
-## Technical Details
+This gives a full audit trail without a new table. Both the recording event and the mark-out event appear.
 
-### Files to modify:
+**Changes to `src/pages/Transactions.tsx`:**
+- Transform scrap entries into transaction-like rows: for each OUT entry, create two rows (IN at created_at, OUT at marked_out_at)
+- Add quantity column to the scrap transactions table
+
+---
+
+## Technical Summary
 
 | File | Changes |
 |------|---------|
-| `src/pages/Inventory.tsx` | Add Trolley category in Add Product form and tabs; add search input in Stock Transfer product selector; update bulk import logic to support new product creation |
-| `src/pages/Shop.tsx` | Add Trolley to product type selector and tabs/stats; redesign Record Sale form with single searchable product picker and list pattern; add search in product selection |
-| `src/pages/Scrap.tsx` | Replace free-text scrap_item with category dropdown (Car, Bike, Inverter Battery, SMF); keep model as text |
-| `src/pages/Transactions.tsx` | Add Tabs for "Stock Transactions" and "Scrap Transactions"; fetch and display scrap_entries in new tab |
-
-### No database migration needed:
-- `scrap_item` is already a text column -- we just constrain it via UI dropdown
-- `category` on products is a text column -- "Trolley" works without schema changes
-- Bulk import creates new products using existing `products` + `warehouse_stock` insert APIs
+| `src/pages/Dashboard.tsx` | Fetch shop_stock, shop_sales, shop_sale_items, scrap_entries, stock_transactions; add Shop, Scrap, Warehouse sections to overview |
+| `src/pages/Inventory.tsx` | Set default transferForm to `transaction_type: 'IN', source: 'WAREHOUSE'`; auto-switch source when type changes |
+| `src/pages/Shop.tsx` | Restructure Sales History table to clearly show item model, quantity per line |
+| `src/pages/Scrap.tsx` | Add quantity field to form and interface; make scrap_value optional |
+| `src/pages/Transactions.tsx` | Show dual rows for OUT scrap entries (IN record + OUT record); add quantity column |
+| **DB Migration** | `ALTER TABLE scrap_entries ADD COLUMN quantity integer NOT NULL DEFAULT 1;` |
 
