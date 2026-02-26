@@ -16,11 +16,24 @@ interface ScrapEntry {
   scrap_item: string;
   scrap_model: string;
   scrap_value: number;
+  quantity: number;
   status: string;
   marked_out_at: string | null;
   marked_out_by: string | null;
   recorded_by: string;
   created_at: string;
+}
+
+interface ScrapTransactionRow {
+  key: string;
+  date: string;
+  customer_name: string;
+  scrap_item: string;
+  scrap_model: string;
+  quantity: number;
+  scrap_value: number;
+  type: 'IN' | 'OUT';
+  recorded_by: string;
 }
 
 export default function Transactions() {
@@ -70,10 +83,43 @@ export default function Transactions() {
     trans.remarks?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const filteredScrap = scrapEntries.filter(entry =>
-    entry.customer_name.toLowerCase().includes(search.toLowerCase()) ||
-    entry.scrap_item.toLowerCase().includes(search.toLowerCase()) ||
-    entry.scrap_model.toLowerCase().includes(search.toLowerCase())
+  // Build dual IN/OUT rows for scrap transactions
+  const scrapTransactionRows: ScrapTransactionRow[] = [];
+  for (const entry of scrapEntries) {
+    // Every entry has an IN record (when it was created)
+    scrapTransactionRows.push({
+      key: `${entry.id}-in`,
+      date: entry.created_at,
+      customer_name: entry.customer_name,
+      scrap_item: entry.scrap_item,
+      scrap_model: entry.scrap_model,
+      quantity: entry.quantity || 1,
+      scrap_value: entry.scrap_value,
+      type: 'IN',
+      recorded_by: entry.recorded_by,
+    });
+    // If status is OUT, also add an OUT record
+    if (entry.status === 'OUT' && entry.marked_out_at) {
+      scrapTransactionRows.push({
+        key: `${entry.id}-out`,
+        date: entry.marked_out_at,
+        customer_name: entry.customer_name,
+        scrap_item: entry.scrap_item,
+        scrap_model: entry.scrap_model,
+        quantity: entry.quantity || 1,
+        scrap_value: entry.scrap_value,
+        type: 'OUT',
+        recorded_by: entry.marked_out_by || entry.recorded_by,
+      });
+    }
+  }
+  // Sort by date descending
+  scrapTransactionRows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const filteredScrapRows = scrapTransactionRows.filter(row =>
+    row.customer_name.toLowerCase().includes(search.toLowerCase()) ||
+    row.scrap_item.toLowerCase().includes(search.toLowerCase()) ||
+    row.scrap_model.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -102,7 +148,7 @@ export default function Transactions() {
           <Tabs defaultValue="stock">
             <TabsList>
               <TabsTrigger value="stock">Stock Transactions ({filteredTransactions.length})</TabsTrigger>
-              <TabsTrigger value="scrap">Scrap Transactions ({filteredScrap.length})</TabsTrigger>
+              <TabsTrigger value="scrap">Scrap Transactions ({filteredScrapRows.length})</TabsTrigger>
             </TabsList>
 
             <TabsContent value="stock">
@@ -182,29 +228,30 @@ export default function Transactions() {
                         <TableHead>Customer</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Model</TableHead>
-                        <TableHead>Status</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead className="text-right">Qty</TableHead>
                         <TableHead className="text-right">Value (₹)</TableHead>
-                        <TableHead>Recorded By</TableHead>
+                        <TableHead>By</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredScrap.length === 0 ? (
+                      {filteredScrapRows.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                          <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                             No scrap transactions found
                           </TableCell>
                         </TableRow>
                       ) : (
-                        filteredScrap.map((entry) => (
-                          <TableRow key={entry.id}>
+                        filteredScrapRows.map((row) => (
+                          <TableRow key={row.key}>
                             <TableCell className="text-muted-foreground">
-                              {format(new Date(entry.created_at), 'MMM dd, yyyy HH:mm')}
+                              {format(new Date(row.date), 'MMM dd, yyyy HH:mm')}
                             </TableCell>
-                            <TableCell className="font-medium">{entry.customer_name}</TableCell>
-                            <TableCell><Badge variant="outline">{entry.scrap_item}</Badge></TableCell>
-                            <TableCell>{entry.scrap_model}</TableCell>
+                            <TableCell className="font-medium">{row.customer_name}</TableCell>
+                            <TableCell><Badge variant="outline">{row.scrap_item}</Badge></TableCell>
+                            <TableCell>{row.scrap_model}</TableCell>
                             <TableCell>
-                              {entry.status === 'IN' ? (
+                              {row.type === 'IN' ? (
                                 <Badge variant="outline" className="gap-1 bg-chart-4/20 text-chart-4 border-chart-4/30">
                                   <ArrowUpCircle className="h-3 w-3" />
                                   IN
@@ -216,8 +263,9 @@ export default function Transactions() {
                                 </Badge>
                               )}
                             </TableCell>
-                            <TableCell className="text-right font-medium">₹{entry.scrap_value.toLocaleString('en-IN')}</TableCell>
-                            <TableCell>{getProfileName(entry.recorded_by)}</TableCell>
+                            <TableCell className="text-right">{row.quantity}</TableCell>
+                            <TableCell className="text-right font-medium">₹{row.scrap_value.toLocaleString('en-IN')}</TableCell>
+                            <TableCell>{getProfileName(row.recorded_by)}</TableCell>
                           </TableRow>
                         ))
                       )}

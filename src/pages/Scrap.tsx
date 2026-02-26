@@ -33,6 +33,7 @@ interface ScrapEntry {
   scrap_item: string;
   scrap_model: string;
   scrap_value: number;
+  quantity: number;
   status: string;
   marked_out_at: string | null;
   marked_out_by: string | null;
@@ -49,7 +50,7 @@ export default function Scrap() {
   const [isRecordOpen, setIsRecordOpen] = useState(false);
   const [entryToMarkOut, setEntryToMarkOut] = useState<ScrapEntry | null>(null);
 
-  const [form, setForm] = useState({ customer_name: '', scrap_item: '', scrap_model: '', scrap_value: '' });
+  const [form, setForm] = useState({ customer_name: '', scrap_item: '', scrap_model: '', scrap_value: '', quantity: '1' });
 
   const canManage = hasAnyRole(['admin', 'counter_staff', 'scrap_manager']);
 
@@ -77,12 +78,13 @@ export default function Scrap() {
         scrap_item: form.scrap_item,
         scrap_model: form.scrap_model.trim(),
         scrap_value: parseFloat(form.scrap_value) || 0,
+        quantity: parseInt(form.quantity) || 1,
         recorded_by: user.id,
       });
       if (error) throw error;
       toast({ title: 'Scrap entry recorded' });
       setIsRecordOpen(false);
-      setForm({ customer_name: '', scrap_item: '', scrap_model: '', scrap_value: '' });
+      setForm({ customer_name: '', scrap_item: '', scrap_model: '', scrap_value: '', quantity: '1' });
       fetchEntries();
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'An error occurred';
@@ -127,6 +129,7 @@ export default function Scrap() {
           <TableHead>Customer</TableHead>
           <TableHead>Category</TableHead>
           <TableHead>Model</TableHead>
+          <TableHead className="text-right">Qty</TableHead>
           <TableHead className="text-right">Value (₹)</TableHead>
           <TableHead>Date</TableHead>
           <TableHead>Status</TableHead>
@@ -136,7 +139,7 @@ export default function Scrap() {
       <TableBody>
         {items.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={showMarkOut && canManage ? 7 : 6} className="text-center text-muted-foreground py-8">
+            <TableCell colSpan={showMarkOut && canManage ? 8 : 7} className="text-center text-muted-foreground py-8">
               No entries found
             </TableCell>
           </TableRow>
@@ -145,6 +148,7 @@ export default function Scrap() {
             <TableCell className="font-medium">{entry.customer_name}</TableCell>
             <TableCell><Badge variant="outline">{entry.scrap_item}</Badge></TableCell>
             <TableCell>{entry.scrap_model}</TableCell>
+            <TableCell className="text-right">{entry.quantity}</TableCell>
             <TableCell className="text-right">₹{entry.scrap_value.toLocaleString('en-IN')}</TableCell>
             <TableCell>{format(new Date(entry.created_at), 'dd/MM/yyyy')}</TableCell>
             <TableCell>
@@ -199,8 +203,12 @@ export default function Scrap() {
                     <Input value={form.scrap_model} onChange={e => setForm({ ...form, scrap_model: e.target.value })} required />
                   </div>
                   <div className="space-y-2">
-                    <Label>Scrap Value (₹)</Label>
-                    <Input type="number" value={form.scrap_value} onChange={e => setForm({ ...form, scrap_value: e.target.value })} required min="0" />
+                    <Label>Quantity</Label>
+                    <Input type="number" min="1" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Scrap Value (₹) <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                    <Input type="number" value={form.scrap_value} onChange={e => setForm({ ...form, scrap_value: e.target.value })} min="0" />
                   </div>
                   <Button type="submit" className="w-full" disabled={!form.scrap_item}>Record Entry</Button>
                 </form>
@@ -216,7 +224,7 @@ export default function Scrap() {
               <CardTitle className="text-sm font-medium">Scrap In Stock</CardTitle>
               <PackageOpen className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
-            <CardContent><div className="text-2xl font-bold">{inEntries.length}</div></CardContent>
+            <CardContent><div className="text-2xl font-bold">{entries.filter(e => e.status === 'IN').reduce((s, e) => s + e.quantity, 0)}</div></CardContent>
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
