@@ -81,6 +81,7 @@ export type Database = {
           id: string
           marked_out_at: string | null
           marked_out_by: string | null
+          quantity: number
           recorded_by: string
           scrap_item: string
           scrap_model: string
@@ -93,6 +94,7 @@ export type Database = {
           id?: string
           marked_out_at?: string | null
           marked_out_by?: string | null
+          quantity?: number
           recorded_by: string
           scrap_item: string
           scrap_model: string
@@ -105,6 +107,7 @@ export type Database = {
           id?: string
           marked_out_at?: string | null
           marked_out_by?: string | null
+          quantity?: number
           recorded_by?: string
           scrap_item?: string
           scrap_model?: string

@@ -1,0 +1,1 @@
+ALTER TABLE public.scrap_entries ADD COLUMN quantity integer NOT NULL DEFAULT 1;

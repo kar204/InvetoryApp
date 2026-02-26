@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Wrench, Package, CheckCircle, AlertTriangle, TrendingUp, Download, Activity } from 'lucide-react';
+import { Wrench, Package, CheckCircle, AlertTriangle, TrendingUp, Download, Activity, ShoppingCart, Recycle, Store } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { StatsCard } from '@/components/dashboard/StatsCard';
 import { RecentTickets } from '@/components/dashboard/RecentTickets';
@@ -18,6 +18,13 @@ export default function Dashboard() {
     totalStock: 0,
     lowStockCount: 0,
     inProgressTickets: 0,
+    shopStock: 0,
+    todaySalesCount: 0,
+    todaySalesRevenue: 0,
+    scrapInCount: 0,
+    scrapInValue: 0,
+    todayStockIn: 0,
+    todayStockOut: 0,
   });
   const [recentTickets, setRecentTickets] = useState<ServiceTicket[]>([]);
   const [lowStockItems, setLowStockItems] = useState<WarehouseStock[]>([]);
@@ -51,44 +58,68 @@ export default function Dashboard() {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      const { data: tickets } = await supabase
-        .from('service_tickets')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(5);
+      const [
+        ticketsRes,
+        openRes,
+        inProgressRes,
+        closedTodayRes,
+        stockRes,
+        shopStockRes,
+        todaySalesRes,
+        scrapRes,
+        todayStockInRes,
+        todayStockOutRes,
+      ] = await Promise.all([
+        supabase.from('service_tickets').select('*').order('created_at', { ascending: false }).limit(5),
+        supabase.from('service_tickets').select('id', { count: 'exact' }).eq('status', 'OPEN'),
+        supabase.from('service_tickets').select('id', { count: 'exact' }).eq('status', 'IN_PROGRESS'),
+        supabase.from('service_tickets').select('id', { count: 'exact' }).eq('status', 'CLOSED').gte('updated_at', today.toISOString()),
+        supabase.from('warehouse_stock').select('*, product:products(*)'),
+        supabase.from('shop_stock').select('quantity'),
+        supabase.from('shop_sales').select('id').gte('created_at', today.toISOString()),
+        supabase.from('scrap_entries').select('scrap_value, status, quantity'),
+        supabase.from('stock_transactions').select('quantity').eq('transaction_type', 'IN').gte('created_at', today.toISOString()),
+        supabase.from('stock_transactions').select('quantity').eq('transaction_type', 'OUT').gte('created_at', today.toISOString()),
+      ]);
 
-      const { data: openTickets } = await supabase
-        .from('service_tickets')
-        .select('id', { count: 'exact' })
-        .eq('status', 'OPEN');
+      const stockData = (stockRes.data || []) as (WarehouseStock & { product: Product })[];
+      const lowStock = stockData.filter(s => s.quantity < 5);
+      const totalStock = stockData.reduce((acc, s) => acc + s.quantity, 0);
 
-      const { data: inProgressTickets } = await supabase
-        .from('service_tickets')
-        .select('id', { count: 'exact' })
-        .eq('status', 'IN_PROGRESS');
+      const shopStockTotal = (shopStockRes.data || []).reduce((acc: number, s: any) => acc + (s.quantity || 0), 0);
 
-      const { data: closedToday } = await supabase
-        .from('service_tickets')
-        .select('id', { count: 'exact' })
-        .eq('status', 'CLOSED')
-        .gte('updated_at', today.toISOString());
+      // Today's sales revenue: fetch sale items for today's sales
+      const todaySaleIds = (todaySalesRes.data || []).map((s: any) => s.id);
+      let todaySalesRevenue = 0;
+      if (todaySaleIds.length > 0) {
+        const { data: saleItems } = await supabase.from('shop_sale_items').select('price, quantity').in('sale_id', todaySaleIds);
+        todaySalesRevenue = (saleItems || []).reduce((acc: number, item: any) => acc + ((item.price || 0) * (item.quantity || 1)), 0);
+      }
 
-      const { data: stockData } = await supabase
-        .from('warehouse_stock')
-        .select('*, product:products(*)');
+      const scrapEntries = (scrapRes.data || []) as any[];
+      const scrapInEntries = scrapEntries.filter(e => e.status === 'IN');
+      const scrapInCount = scrapInEntries.reduce((acc: number, e: any) => acc + (e.quantity || 1), 0);
+      const scrapInValue = scrapInEntries.reduce((acc: number, e: any) => acc + (e.scrap_value || 0), 0);
 
-      const lowStock = (stockData || []).filter((s: WarehouseStock & { product: Product }) => s.quantity < 5);
-      const totalStock = (stockData || []).reduce((acc: number, s: WarehouseStock & { product: Product }) => acc + s.quantity, 0);
+      const todayStockIn = (todayStockInRes.data || []).reduce((acc: number, t: any) => acc + (t.quantity || 0), 0);
+      const todayStockOut = (todayStockOutRes.data || []).reduce((acc: number, t: any) => acc + (t.quantity || 0), 0);
 
       setStats({
-        openTickets: openTickets?.length || 0,
-        closedToday: closedToday?.length || 0,
+        openTickets: openRes.data?.length || 0,
+        closedToday: closedTodayRes.data?.length || 0,
         totalStock,
         lowStockCount: lowStock.length,
-        inProgressTickets: inProgressTickets?.length || 0,
+        inProgressTickets: inProgressRes.data?.length || 0,
+        shopStock: shopStockTotal,
+        todaySalesCount: todaySaleIds.length,
+        todaySalesRevenue,
+        scrapInCount,
+        scrapInValue,
+        todayStockIn,
+        todayStockOut,
       });
 
-      setRecentTickets((tickets as ServiceTicket[]) || []);
+      setRecentTickets((ticketsRes.data as ServiceTicket[]) || []);
       setLowStockItems(lowStock as WarehouseStock[]);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -136,28 +167,85 @@ export default function Dashboard() {
           </Button>
         </div>
 
-        {/* Overview banner */}
-        <div className="glass-card rounded-2xl p-6">
-          <div className="flex items-center gap-3 mb-1">
-            <Activity className="h-5 w-5 text-primary" />
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Today's Overview</h2>
+        {/* Overview banner - 4 sections */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          {/* Service */}
+          <div className="glass-card rounded-2xl p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Wrench className="h-4 w-4 text-primary" />
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Service</h3>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-2xl font-bold text-primary">{totalActiveTickets}</p>
+                <p className="text-xs text-muted-foreground">Active Tickets</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-chart-3">{stats.closedToday}</p>
+                <p className="text-xs text-muted-foreground">Resolved Today</p>
+              </div>
+            </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-4">
-            <div>
-              <p className="text-2xl font-bold text-primary">{totalActiveTickets}</p>
-              <p className="text-xs text-muted-foreground">Active Tickets</p>
+
+          {/* Warehouse */}
+          <div className="glass-card rounded-2xl p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Package className="h-4 w-4 text-primary" />
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Warehouse</h3>
             </div>
-            <div>
-              <p className="text-2xl font-bold text-chart-3">{stats.closedToday}</p>
-              <p className="text-xs text-muted-foreground">Resolved Today</p>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <p className="text-2xl font-bold">{stats.totalStock}</p>
+                <p className="text-xs text-muted-foreground">Total Stock</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-chart-3">{stats.todayStockIn}</p>
+                <p className="text-xs text-muted-foreground">In Today</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-destructive">{stats.todayStockOut}</p>
+                <p className="text-xs text-muted-foreground">Out Today</p>
+              </div>
             </div>
-            <div>
-              <p className="text-2xl font-bold">{stats.totalStock}</p>
-              <p className="text-xs text-muted-foreground">Stock Units</p>
+          </div>
+
+          {/* Shop */}
+          <div className="glass-card rounded-2xl p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Store className="h-4 w-4 text-primary" />
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Shop</h3>
             </div>
-            <div>
-              <p className={`text-2xl font-bold ${stats.lowStockCount > 0 ? 'text-destructive' : 'text-chart-3'}`}>{stats.lowStockCount}</p>
-              <p className="text-xs text-muted-foreground">Low Stock Items</p>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <p className="text-2xl font-bold">{stats.shopStock}</p>
+                <p className="text-xs text-muted-foreground">Stock Units</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-primary">{stats.todaySalesCount}</p>
+                <p className="text-xs text-muted-foreground">Sales Today</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-chart-3">₹{stats.todaySalesRevenue.toLocaleString('en-IN')}</p>
+                <p className="text-xs text-muted-foreground">Revenue</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Scrap */}
+          <div className="glass-card rounded-2xl p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Recycle className="h-4 w-4 text-primary" />
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Scrap</h3>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-2xl font-bold">{stats.scrapInCount}</p>
+                <p className="text-xs text-muted-foreground">In Stock</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-chart-3">₹{stats.scrapInValue.toLocaleString('en-IN')}</p>
+                <p className="text-xs text-muted-foreground">Value (IN)</p>
+              </div>
             </div>
           </div>
         </div>

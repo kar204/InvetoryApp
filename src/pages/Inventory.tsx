@@ -52,8 +52,8 @@ export default function Inventory() {
 
   // Stock transfer form
   const [transferForm, setTransferForm] = useState({
-    transaction_type: '' as TransactionType | '',
-    source: '' as StockSource | '',
+    transaction_type: 'IN' as TransactionType | '',
+    source: 'WAREHOUSE' as StockSource | '',
     remarks: '',
   });
 
@@ -588,7 +588,10 @@ export default function Inventory() {
                         <Label>Transaction Type</Label>
                         <Select 
                           value={transferForm.transaction_type} 
-                          onValueChange={(value) => setTransferForm({ ...transferForm, transaction_type: value as TransactionType })}
+                          onValueChange={(value) => {
+                            const newSource = value === 'IN' ? 'WAREHOUSE' : value === 'OUT' ? 'SHOP' : transferForm.source;
+                            setTransferForm({ ...transferForm, transaction_type: value as TransactionType, source: newSource as StockSource | '' });
+                          }}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select type" />

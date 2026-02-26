@@ -442,41 +442,44 @@ export default function Shop() {
                 </CardHeader>
                 <CardContent>
                   <Table>
-                    <TableHeader>
+                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>
                         <TableHead>Customer</TableHead>
-                        <TableHead>Items</TableHead>
-                        <TableHead className="text-right">Total (₹)</TableHead>
+                        <TableHead>Item</TableHead>
+                        <TableHead>Model</TableHead>
+                        <TableHead className="text-right">Qty</TableHead>
+                        <TableHead className="text-right">Price (₹)</TableHead>
+                        <TableHead className="text-right">Subtotal (₹)</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {salesHistory.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={4} className="text-center text-muted-foreground py-8">No sales recorded yet</TableCell>
+                          <TableCell colSpan={7} className="text-center text-muted-foreground py-8">No sales recorded yet</TableCell>
                         </TableRow>
-                      ) : salesHistory.map(sale => {
-                        const total = (sale.items || []).reduce((s, i) => s + (i.price || 0) * i.quantity, 0);
-                        return (
-                          <TableRow key={sale.id}>
-                            <TableCell>{format(new Date(sale.created_at), 'dd/MM/yyyy HH:mm')}</TableCell>
-                            <TableCell className="font-medium">{sale.customer_name}</TableCell>
-                            <TableCell>
-                              <div className="space-y-1">
-                                {(sale.items || []).map(item => (
-                                  <div key={item.id} className="text-sm">
-                                    <Badge variant="outline" className="mr-1 text-xs">{item.product_type}</Badge>
-                                    {item.model_number} × {item.quantity}
-                                    {item.price ? ` — ₹${item.price.toLocaleString('en-IN')}` : ''}
-                                  </div>
-                                ))}
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-right font-medium">
-                              {total > 0 ? `₹${total.toLocaleString('en-IN')}` : '-'}
-                            </TableCell>
+                      ) : salesHistory.flatMap(sale => {
+                        const items = sale.items || [];
+                        if (items.length === 0) {
+                          return [(
+                            <TableRow key={sale.id}>
+                              <TableCell>{format(new Date(sale.created_at), 'dd/MM/yyyy HH:mm')}</TableCell>
+                              <TableCell className="font-medium">{sale.customer_name}</TableCell>
+                              <TableCell colSpan={5} className="text-muted-foreground">No items</TableCell>
+                            </TableRow>
+                          )];
+                        }
+                        return items.map((item, idx) => (
+                          <TableRow key={`${sale.id}-${item.id}`} className={idx > 0 ? 'border-t-0' : ''}>
+                            <TableCell className={idx > 0 ? 'text-transparent' : ''}>{format(new Date(sale.created_at), 'dd/MM/yyyy HH:mm')}</TableCell>
+                            <TableCell className={`font-medium ${idx > 0 ? 'text-transparent' : ''}`}>{sale.customer_name}</TableCell>
+                            <TableCell><Badge variant="outline" className="text-xs">{item.product_type}</Badge></TableCell>
+                            <TableCell>{item.model_number}</TableCell>
+                            <TableCell className="text-right">{item.quantity}</TableCell>
+                            <TableCell className="text-right">{item.price ? `₹${item.price.toLocaleString('en-IN')}` : '-'}</TableCell>
+                            <TableCell className="text-right font-medium">{item.price ? `₹${(item.price * item.quantity).toLocaleString('en-IN')}` : '-'}</TableCell>
                           </TableRow>
-                        );
+                        ));
                       })}
                     </TableBody>
                   </Table>
