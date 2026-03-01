@@ -35,6 +35,7 @@ export default function Inventory() {
   const [stock, setStock] = useState<WarehouseStock[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [isStockTransferOpen, setIsStockTransferOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
@@ -241,10 +242,18 @@ export default function Inventory() {
     }
   };
 
-  const filteredStock = stock.filter(item =>
-    item.product?.name?.toLowerCase().includes(search.toLowerCase()) ||
-    item.product?.model?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredStock = stock.filter(item => {
+    const matchesSearch = item.product?.name?.toLowerCase().includes(search.toLowerCase()) ||
+      item.product?.model?.toLowerCase().includes(search.toLowerCase());
+    
+    if (!matchesSearch) return false;
+
+    if (stockFilter === 'low') return item.quantity < 5;
+    if (stockFilter === 'medium') return item.quantity >= 5 && item.quantity < 20;
+    if (stockFilter === 'high') return item.quantity >= 20;
+    
+    return true;
+  });
 
   const filterByCategory = (category: string) =>
     filteredStock.filter(item => (item.product as any)?.category === category);
@@ -513,7 +522,10 @@ export default function Inventory() {
                           <SelectItem value="Battery">Battery</SelectItem>
                           <SelectItem value="Inverter">Inverter</SelectItem>
                           <SelectItem value="UPS">UPS</SelectItem>
-                          <SelectItem value="Trolley">Trolley</SelectItem>
+                          <SelectItem value="Trolly">Trolly</SelectItem>
+                          <SelectItem value="Solar Panel">Solar Panel</SelectItem>
+                          <SelectItem value="Charger">Charger</SelectItem>
+                          <SelectItem value="SMF">SMF</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -720,14 +732,27 @@ export default function Inventory() {
           </div>
         </div>
 
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search products..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-10 max-w-md"
-          />
+        <div className="flex flex-col gap-4 sm:flex-row">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search products..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+          <Select value={stockFilter} onValueChange={(v: any) => setStockFilter(v)}>
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectValue placeholder="Stock Level" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Levels</SelectItem>
+              <SelectItem value="low">Low Stock (&lt; 5)</SelectItem>
+              <SelectItem value="medium">Medium (5-19)</SelectItem>
+              <SelectItem value="high">High Stock (20+)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {loading ? (
@@ -741,7 +766,10 @@ export default function Inventory() {
               <TabsTrigger value="Battery">Batteries ({filterByCategory('Battery').length})</TabsTrigger>
               <TabsTrigger value="Inverter">Inverters ({filterByCategory('Inverter').length})</TabsTrigger>
               <TabsTrigger value="UPS">UPS ({filterByCategory('UPS').length})</TabsTrigger>
-              <TabsTrigger value="Trolley">Trolley ({filterByCategory('Trolley').length})</TabsTrigger>
+              <TabsTrigger value="Trolly">Trollys ({filterByCategory('Trolly').length})</TabsTrigger>
+              <TabsTrigger value="Solar Panel">Solar Panels ({filterByCategory('Solar Panel').length})</TabsTrigger>
+              <TabsTrigger value="Charger">Chargers ({filterByCategory('Charger').length})</TabsTrigger>
+              <TabsTrigger value="SMF">SMF ({filterByCategory('SMF').length})</TabsTrigger>
             </TabsList>
             <TabsContent value="all">
               <Card><CardHeader><CardTitle>All Stock</CardTitle></CardHeader><CardContent>{renderStockTable(filteredStock)}</CardContent></Card>
@@ -755,8 +783,17 @@ export default function Inventory() {
             <TabsContent value="UPS">
               <Card><CardHeader><CardTitle>UPS</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('UPS'))}</CardContent></Card>
             </TabsContent>
-            <TabsContent value="Trolley">
-              <Card><CardHeader><CardTitle>Trolley</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('Trolley'))}</CardContent></Card>
+            <TabsContent value="Trolly">
+              <Card><CardHeader><CardTitle>Trollys</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('Trolly'))}</CardContent></Card>
+            </TabsContent>
+            <TabsContent value="Solar Panel">
+              <Card><CardHeader><CardTitle>Solar Panels</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('Solar Panel'))}</CardContent></Card>
+            </TabsContent>
+            <TabsContent value="Charger">
+              <Card><CardHeader><CardTitle>Chargers</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('Charger'))}</CardContent></Card>
+            </TabsContent>
+            <TabsContent value="SMF">
+              <Card><CardHeader><CardTitle>SMF</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('SMF'))}</CardContent></Card>
             </TabsContent>
           </Tabs>
         )}

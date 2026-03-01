@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -62,6 +63,7 @@ export default function Shop() {
   const [shopStock, setShopStock] = useState<ShopStockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
   const [isSaleOpen, setIsSaleOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [saleRemarks, setSaleRemarks] = useState('');
@@ -202,11 +204,19 @@ export default function Shop() {
   const totalStock = shopStock.reduce((sum, s) => sum + s.quantity, 0);
 
   const filterByCategory = (category: string) =>
-    shopStock.filter(item =>
-      item.product?.category === category &&
-      (item.product?.name?.toLowerCase().includes(search.toLowerCase()) ||
-       item.product?.model?.toLowerCase().includes(search.toLowerCase()))
-    );
+    shopStock.filter(item => {
+      const matchesCategory = item.product?.category === category;
+      const matchesSearch = item.product?.name?.toLowerCase().includes(search.toLowerCase()) ||
+        item.product?.model?.toLowerCase().includes(search.toLowerCase());
+      
+      if (!matchesCategory || !matchesSearch) return false;
+
+      if (stockFilter === 'low') return item.quantity < 5;
+      if (stockFilter === 'medium') return item.quantity >= 5 && item.quantity < 20;
+      if (stockFilter === 'high') return item.quantity >= 20;
+      
+      return true;
+    });
 
   const filteredSaleProducts = shopStock.filter(s =>
     s.quantity > 0 &&
@@ -386,15 +396,45 @@ export default function Shop() {
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Trolley Stock</CardTitle>
+              <CardTitle className="text-sm font-medium">Trollys Stock</CardTitle>
             </CardHeader>
-            <CardContent><div className="text-2xl font-bold">{filterByCategory('Trolley').reduce((s, i) => s + i.quantity, 0)}</div></CardContent>
+            <CardContent><div className="text-2xl font-bold">{filterByCategory('Trolly').reduce((s, i) => s + i.quantity, 0)}</div></CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Chargers Stock</CardTitle>
+            </CardHeader>
+            <CardContent><div className="text-2xl font-bold">{filterByCategory('Charger').reduce((s, i) => s + i.quantity, 0)}</div></CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">SMF Stock</CardTitle>
+            </CardHeader>
+            <CardContent><div className="text-2xl font-bold">{filterByCategory('SMF').reduce((s, i) => s + i.quantity, 0)}</div></CardContent>
           </Card>
         </div>
 
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Search products..." value={search} onChange={e => setSearch(e.target.value)} className="pl-10 max-w-md" />
+        <div className="flex flex-col gap-4 sm:flex-row mb-6">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search products..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+          <Select value={stockFilter} onValueChange={(v: any) => setStockFilter(v)}>
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectValue placeholder="Stock Level" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Levels</SelectItem>
+              <SelectItem value="low">Low Stock (&lt; 5)</SelectItem>
+              <SelectItem value="medium">Medium (5-19)</SelectItem>
+              <SelectItem value="high">High Stock (20+)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {loading ? (
@@ -408,7 +448,10 @@ export default function Shop() {
               <TabsTrigger value="Battery">Batteries</TabsTrigger>
               <TabsTrigger value="Inverter">Inverters</TabsTrigger>
               <TabsTrigger value="UPS">UPS</TabsTrigger>
-              <TabsTrigger value="Trolley">Trolley</TabsTrigger>
+              <TabsTrigger value="Trolly">Trollys</TabsTrigger>
+              <TabsTrigger value="Solar Panel">Solar Panels</TabsTrigger>
+              <TabsTrigger value="Charger">Chargers</TabsTrigger>
+              <TabsTrigger value="SMF">SMF</TabsTrigger>
               <TabsTrigger value="history">
                 <History className="h-3 w-3 mr-1" />
                 Sales History
@@ -429,8 +472,17 @@ export default function Shop() {
             <TabsContent value="UPS">
               <Card><CardContent className="pt-6">{renderStockTable(filterByCategory('UPS'))}</CardContent></Card>
             </TabsContent>
-            <TabsContent value="Trolley">
-              <Card><CardContent className="pt-6">{renderStockTable(filterByCategory('Trolley'))}</CardContent></Card>
+            <TabsContent value="Trolly">
+              <Card><CardContent className="pt-6">{renderStockTable(filterByCategory('Trolly'))}</CardContent></Card>
+            </TabsContent>
+            <TabsContent value="Solar Panel">
+              <Card><CardContent className="pt-6">{renderStockTable(filterByCategory('Solar Panel'))}</CardContent></Card>
+            </TabsContent>
+            <TabsContent value="Charger">
+              <Card><CardContent className="pt-6">{renderStockTable(filterByCategory('Charger'))}</CardContent></Card>
+            </TabsContent>
+            <TabsContent value="SMF">
+              <Card><CardContent className="pt-6">{renderStockTable(filterByCategory('SMF'))}</CardContent></Card>
             </TabsContent>
             <TabsContent value="history">
               <Card>
