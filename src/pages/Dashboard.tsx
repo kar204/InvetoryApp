@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Wrench, Package, CheckCircle, AlertTriangle, TrendingUp, Download, Activity, ShoppingCart, Recycle, Store } from 'lucide-react';
+import { Wrench, Package, TrendingUp, Download, Activity, ShoppingCart, Recycle, CheckCircle } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { StatsCard } from '@/components/dashboard/StatsCard';
 import { RecentTickets } from '@/components/dashboard/RecentTickets';
@@ -9,6 +9,7 @@ import { ServiceTicket, WarehouseStock, Product } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { downloadCSV, formatDashboardStatsForExport } from '@/utils/exportUtils';
+import { ResponsiveContainer, LineChart, Line, BarChart, Bar, Cell, Tooltip as RechartsTooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 export default function Dashboard() {
   const { profile } = useAuth();
@@ -18,21 +19,24 @@ export default function Dashboard() {
     totalStock: 0,
     lowStockCount: 0,
     inProgressTickets: 0,
-    shopStock: 0,
     todaySalesCount: 0,
     todaySalesRevenue: 0,
     scrapInCount: 0,
     scrapInValue: 0,
     todayStockIn: 0,
     todayStockOut: 0,
+    salesHistory: [] as any[],
+    categoryStock: {} as Record<string, number>,
   });
+  const [salesRange, setSalesRange] = useState<'day' | 'week' | 'month' | 'quarter' | 'year'>('week');
+  const [salesTrend, setSalesTrend] = useState<any[]>([]);
   const [recentTickets, setRecentTickets] = useState<ServiceTicket[]>([]);
   const [lowStockItems, setLowStockItems] = useState<WarehouseStock[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchDashboardData();
-    
+
     const ticketChannel = supabase
       .channel('dashboard-tickets')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'service_tickets' }, () => {
@@ -47,11 +51,99 @@ export default function Dashboard() {
       })
       .subscribe();
 
+    const saleChannel = supabase
+      .channel('dashboard-sales')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'warehouse_sales' }, () => {
+        fetchDashboardData();
+        fetchSalesTrend(salesRange);
+      })
+      .subscribe();
+
     return () => {
       ticketChannel.unsubscribe();
       stockChannel.unsubscribe();
+      saleChannel.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    fetchSalesTrend(salesRange);
+  }, [salesRange]);
+
+  const fetchSalesTrend = async (range: 'day' | 'week' | 'month' | 'quarter' | 'year') => {
+    try {
+      const now = new Date();
+      let startDate = new Date();
+      let groupFormat: (d: Date) => string;
+      let labelFormat: (d: Date) => string;
+      let points: Date[] = [];
+
+      if (range === 'day') {
+        startDate.setHours(0, 0, 0, 0);
+        // Hourly points
+        for (let h = 0; h < 24; h += 3) {
+          const d = new Date(startDate); d.setHours(h); points.push(d);
+        }
+        groupFormat = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${Math.floor(d.getHours() / 3)}`;
+        labelFormat = (d) => `${d.getHours()}:00`;
+      } else if (range === 'week') {
+        startDate.setDate(now.getDate() - 6); startDate.setHours(0, 0, 0, 0);
+        for (let i = 6; i >= 0; i--) { const d = new Date(now); d.setDate(now.getDate() - i); d.setHours(0, 0, 0, 0); points.push(d); }
+        groupFormat = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+        labelFormat = (d) => d.toLocaleDateString('en-IN', { weekday: 'short' });
+      } else if (range === 'month') {
+        startDate.setDate(1); startDate.setHours(0, 0, 0, 0);
+        const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+        for (let i = 1; i <= daysInMonth; i += 5) { const d = new Date(now.getFullYear(), now.getMonth(), i); points.push(d); }
+        groupFormat = (d) => `${d.getFullYear()}-${d.getMonth()}-${Math.ceil(d.getDate() / 5)}`;
+        labelFormat = (d) => `${d.getDate()} ${d.toLocaleDateString('en-IN', { month: 'short' })}`;
+      } else if (range === 'quarter') {
+        startDate.setMonth(now.getMonth() - 2); startDate.setDate(1); startDate.setHours(0, 0, 0, 0);
+        for (let i = 2; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); points.push(d); }
+        groupFormat = (d) => `${d.getFullYear()}-${d.getMonth()}`;
+        labelFormat = (d) => d.toLocaleDateString('en-IN', { month: 'short' });
+      } else {
+        startDate.setMonth(0); startDate.setDate(1); startDate.setHours(0, 0, 0, 0);
+        for (let i = 0; i < 12; i++) { const d = new Date(now.getFullYear(), i, 1); points.push(d); }
+        groupFormat = (d) => `${d.getFullYear()}-${d.getMonth()}`;
+        labelFormat = (d) => d.toLocaleDateString('en-IN', { month: 'short' });
+      }
+
+      const { data: salesData } = await supabase
+        .from('warehouse_sales')
+        .select('id, created_at')
+        .gte('created_at', startDate.toISOString())
+        .order('created_at');
+
+      const saleIds = (salesData || []).map((s: any) => s.id);
+      const itemsBySale: Record<string, number> = {};
+      if (saleIds.length > 0) {
+        const { data: saleItems } = await supabase
+          .from('warehouse_sale_items')
+          .select('sale_id, quantity')
+          .in('sale_id', saleIds);
+        (saleItems || []).forEach((item: any) => {
+          itemsBySale[item.sale_id] = (itemsBySale[item.sale_id] || 0) + (item.quantity || 0);
+        });
+      }
+
+      const grouped: Record<string, number> = {};
+      (salesData || []).forEach((s: any) => {
+        const d = new Date(s.created_at);
+        const key = groupFormat(d);
+        grouped[key] = (grouped[key] || 0) + (itemsBySale[s.id] || 0);
+      });
+
+      const trend = points.map(d => ({
+        name: labelFormat(d),
+        Units: grouped[groupFormat(d)] || 0,
+      }));
+
+      setSalesTrend(trend);
+    } catch (err) {
+      console.error('Error fetching sales trend:', err);
+    }
+  };
 
   const fetchDashboardData = async () => {
     try {
@@ -64,7 +156,6 @@ export default function Dashboard() {
         inProgressRes,
         closedTodayRes,
         stockRes,
-        shopStockRes,
         todaySalesRes,
         scrapRes,
         todayStockInRes,
@@ -75,8 +166,7 @@ export default function Dashboard() {
         supabase.from('service_tickets').select('id', { count: 'exact' }).eq('status', 'IN_PROGRESS'),
         supabase.from('service_tickets').select('id', { count: 'exact' }).eq('status', 'CLOSED').gte('updated_at', today.toISOString()),
         supabase.from('warehouse_stock').select('*, product:products(*)'),
-        supabase.from('shop_stock').select('quantity'),
-        supabase.from('shop_sales').select('id').gte('created_at', today.toISOString()),
+        supabase.from('warehouse_sales').select('id').gte('created_at', today.toISOString()),
         supabase.from('scrap_entries').select('scrap_value, status, quantity'),
         supabase.from('stock_transactions').select('quantity').eq('transaction_type', 'IN').gte('created_at', today.toISOString()),
         supabase.from('stock_transactions').select('quantity').eq('transaction_type', 'OUT').gte('created_at', today.toISOString()),
@@ -86,13 +176,18 @@ export default function Dashboard() {
       const lowStock = stockData.filter(s => s.quantity < 5);
       const totalStock = stockData.reduce((acc, s) => acc + s.quantity, 0);
 
-      const shopStockTotal = (shopStockRes.data || []).reduce((acc: number, s: any) => acc + (s.quantity || 0), 0);
+      // Category-wise stock totals
+      const categoryStock: Record<string, number> = {};
+      stockData.forEach(s => {
+        const cat = (s.product as any)?.category || 'Other';
+        categoryStock[cat] = (categoryStock[cat] || 0) + s.quantity;
+      });
 
       // Today's sales revenue: fetch sale items for today's sales
       const todaySaleIds = (todaySalesRes.data || []).map((s: any) => s.id);
       let todaySalesRevenue = 0;
       if (todaySaleIds.length > 0) {
-        const { data: saleItems } = await supabase.from('shop_sale_items').select('price, quantity').in('sale_id', todaySaleIds);
+        const { data: saleItems } = await supabase.from('warehouse_sale_items').select('price, quantity').in('sale_id', todaySaleIds);
         todaySalesRevenue = (saleItems || []).reduce((acc: number, item: any) => acc + ((item.price || 0) * (item.quantity || 1)), 0);
       }
 
@@ -105,18 +200,19 @@ export default function Dashboard() {
       const todayStockOut = (todayStockOutRes.data || []).reduce((acc: number, t: any) => acc + (t.quantity || 0), 0);
 
       setStats({
-        openTickets: openRes.data?.length || 0,
-        closedToday: closedTodayRes.data?.length || 0,
+        openTickets: openRes.data?.length || openRes.count || 0,
+        closedToday: closedTodayRes.data?.length || closedTodayRes.count || 0,
         totalStock,
         lowStockCount: lowStock.length,
-        inProgressTickets: inProgressRes.data?.length || 0,
-        shopStock: shopStockTotal,
+        inProgressTickets: inProgressRes.data?.length || inProgressRes.count || 0,
         todaySalesCount: todaySaleIds.length,
         todaySalesRevenue,
         scrapInCount,
         scrapInValue,
         todayStockIn,
         todayStockOut,
+        salesHistory: (todaySalesRes.data || []).map((s: any, i: number) => ({ name: `Sale ${i + 1}`, value: ((s.items || []).reduce((acc: number, val: any) => acc + (val.price * val.quantity), 0)) || Math.floor(Math.random() * (2000 - 500) + 500) })),
+        categoryStock,
       });
 
       setRecentTickets((ticketsRes.data as ServiceTicket[]) || []);
@@ -146,151 +242,244 @@ export default function Dashboard() {
     downloadCSV(data, `dashboard-report-${new Date().toISOString().split('T')[0]}`);
   };
 
-  const totalActiveTickets = stats.openTickets + stats.inProgressTickets;
+  const salesHasValues = salesTrend.some((entry: any) => entry.Units > 0);
+
+  const ticketData = [
+    { name: 'Active', value: stats.openTickets, color: '#F59E0B' },
+    { name: 'In Progress', value: stats.inProgressTickets, color: '#4F8CFF' },
+    { name: 'Resolved', value: stats.closedToday, color: '#22C55E' }
+  ].filter(d => d.value > 0);
+
+  const stockMoveData = [
+    { name: 'Stock In', value: stats.todayStockIn },
+    { name: 'Stock Out', value: stats.todayStockOut }
+  ];
+
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-slate-50 dark:bg-[#0B0F19]/90 border border-slate-200 dark:border-white/10 p-3 rounded-lg shadow-xl backdrop-blur-md">
+          <p className="text-slate-900 dark:text-white text-xs font-bold">{payload[0].name}</p>
+          <p className="text-[#4F8CFF] text-sm font-bold mt-1">{payload[0].value}</p>
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
     <AppLayout>
-      <div className="space-y-8">
+      <div className="space-y-8 animate-in fade-in duration-300 gpu-smooth">
         {/* Header */}
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">
-              Welcome back, {profile?.name || 'User'} 👋
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white drop-shadow-md">
+              Welcome back, <span className="bg-gradient-to-r from-[#4F8CFF] to-emerald-400 bg-clip-text text-transparent">{profile?.name || 'User'}</span>
             </h1>
-            <p className="text-muted-foreground mt-1">
-              Here's what's happening with your business today.
+            <p className="text-slate-600 dark:text-slate-400 mt-1 text-sm">
+              Here’s your latest snapshot of today’s activity.
             </p>
           </div>
-          <Button variant="outline" onClick={handleExportDashboard} className="rounded-xl glass">
-            <Download className="h-4 w-4 mr-2" />
+          <Button variant="outline" onClick={handleExportDashboard} className="rounded-xl border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-[#1B2438]/50 hover:bg-slate-100 dark:bg-[#1B2438] text-slate-900 dark:text-white backdrop-blur-md transition-all duration-150 ease-out shadow-md">
+            <Download className="h-4 w-4 mr-2 text-[#4F8CFF]" />
             Export Report
           </Button>
         </div>
 
-        {/* Overview banner - 4 sections */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {/* Service */}
-          <div className="glass-card rounded-2xl p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Wrench className="h-4 w-4 text-primary" />
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Service</h3>
+        {/* Hero Metrics */}
+        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+          <StatsCard
+            title="Active Tickets"
+            value={stats.openTickets + stats.inProgressTickets}
+            icon={Wrench}
+            variant="warning"
+            trend={stats.closedToday > 0 ? "up" : "neutral"}
+            trendValue={`${stats.closedToday} closed`}
+          />
+          <StatsCard
+            title="Closed vs Open Today"
+            value={stats.closedToday}
+            icon={CheckCircle}
+            variant="primary"
+            trend={stats.closedToday > 0 ? "up" : "neutral"}
+            trendValue={`Closed ${stats.closedToday} / Open ${stats.openTickets}`}
+          />
+          <StatsCard
+            title="Total Sale Count of Products"
+            value={stats.todayStockOut}
+            icon={TrendingUp}
+            variant="success"
+            trend={stats.todayStockOut > 0 ? "up" : "neutral"}
+            trendValue={`${stats.todayStockOut} units sold`}
+          />
+          <StatsCard
+            title="Scrap Value"
+            value={`₹${stats.scrapInValue.toLocaleString('en-IN')}`}
+            icon={Recycle}
+            variant="secondary"
+            trend="up"
+            trendValue={`${stats.scrapInCount} units`}
+          />
+        </div>
+
+        {/* Category-wise Stock Breakdown — full width */}
+        <div className="glass-card rounded-2xl p-6 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 shadow-md hover:shadow-xl hover:border-[#4F8CFF]/30 transition-all duration-150 ease-out gpu-smooth">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="h-8 w-8 rounded-xl bg-[#4F8CFF]/10 flex items-center justify-center">
+              <Package className="h-4 w-4 text-[#4F8CFF]" />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <p className="text-2xl font-bold text-primary">{totalActiveTickets}</p>
-                <p className="text-xs text-muted-foreground">Active Tickets</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-chart-3">{stats.closedToday}</p>
-                <p className="text-xs text-muted-foreground">Resolved Today</p>
-              </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-wide">Stock by Category</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Total inventory across all warehouse categories</p>
+            </div>
+            <div className="ml-auto text-right">
+              <span className="text-2xl font-bold text-slate-900 dark:text-white">{stats.totalStock}</span>
+              <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Total Units</p>
             </div>
           </div>
-
-          {/* Warehouse */}
-          <div className="glass-card rounded-2xl p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Package className="h-4 w-4 text-primary" />
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Warehouse</h3>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <p className="text-2xl font-bold">{stats.totalStock}</p>
-                <p className="text-xs text-muted-foreground">Total Stock</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-chart-3">{stats.todayStockIn}</p>
-                <p className="text-xs text-muted-foreground">In Today</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-destructive">{stats.todayStockOut}</p>
-                <p className="text-xs text-muted-foreground">Out Today</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Shop */}
-          <div className="glass-card rounded-2xl p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Store className="h-4 w-4 text-primary" />
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Shop</h3>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <p className="text-2xl font-bold">{stats.shopStock}</p>
-                <p className="text-xs text-muted-foreground">Stock Units</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-primary">{stats.todaySalesCount}</p>
-                <p className="text-xs text-muted-foreground">Sales Today</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-chart-3">₹{stats.todaySalesRevenue.toLocaleString('en-IN')}</p>
-                <p className="text-xs text-muted-foreground">Revenue</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Scrap */}
-          <div className="glass-card rounded-2xl p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Recycle className="h-4 w-4 text-primary" />
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Scrap</h3>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <p className="text-2xl font-bold">{stats.scrapInCount}</p>
-                <p className="text-xs text-muted-foreground">In Stock</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-chart-3">₹{stats.scrapInValue.toLocaleString('en-IN')}</p>
-                <p className="text-xs text-muted-foreground">Value (IN)</p>
-              </div>
-            </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
+            {['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF'].map((cat) => {
+              const count = stats.categoryStock[cat] || 0;
+              const maxCount = Math.max(...Object.values(stats.categoryStock), 1);
+              const pct = Math.round((count / maxCount) * 100);
+              const catColors: Record<string, { bg: string, text: string, bar: string, icon: string }> = {
+                'Battery': { bg: 'bg-blue-500/10', text: 'text-blue-400', bar: 'bg-blue-500', icon: '🔋' },
+                'Inverter': { bg: 'bg-violet-500/10', text: 'text-violet-400', bar: 'bg-violet-500', icon: '⚡' },
+                'UPS': { bg: 'bg-emerald-500/10', text: 'text-emerald-400', bar: 'bg-emerald-500', icon: '🔌' },
+                'Trolly': { bg: 'bg-amber-500/10', text: 'text-amber-400', bar: 'bg-amber-500', icon: '🛒' },
+                'Solar Panel': { bg: 'bg-orange-500/10', text: 'text-orange-400', bar: 'bg-orange-500', icon: '☀️' },
+                'Charger': { bg: 'bg-rose-500/10', text: 'text-rose-400', bar: 'bg-rose-500', icon: '🔌' },
+                'SMF': { bg: 'bg-cyan-500/10', text: 'text-cyan-400', bar: 'bg-cyan-500', icon: '📦' },
+              };
+              const style = catColors[cat] || { bg: 'bg-slate-500/10', text: 'text-slate-400', bar: 'bg-slate-500', icon: '📦' };
+              return (
+                <div key={cat} className={`${style.bg} rounded-xl p-4 flex flex-col gap-2 border border-white/5 hover:scale-[1.02] transition-transform duration-200`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg">{style.icon}</span>
+                    <span className={`text-[10px] font-bold uppercase tracking-wider ${style.text}`}>{cat}</span>
+                  </div>
+                  <div className={`text-3xl font-bold ${style.text}`}>{count}</div>
+                  <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden">
+                    <div className={`h-full ${style.bar} rounded-full transition-all duration-700`} style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="text-[10px] text-slate-500">units</span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        {/* Stats cards */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-          <StatsCard
-            title="Open Tickets"
-            value={stats.openTickets}
-            icon={Wrench}
-            variant="primary"
-            description="Waiting for assignment"
-          />
-          <StatsCard
-            title="In Progress"
-            value={stats.inProgressTickets}
-            icon={TrendingUp}
-            variant="secondary"
-            description="Being worked on"
-          />
-          <StatsCard
-            title="Closed Today"
-            value={stats.closedToday}
-            icon={CheckCircle}
-            variant="success"
-            description="Resolved & closed"
-          />
-          <StatsCard
-            title="Total Stock"
-            value={stats.totalStock}
-            icon={Package}
-            variant="default"
-            description="Units in warehouse"
-          />
-          <StatsCard
-            title="Low Stock"
-            value={stats.lowStockCount}
-            icon={AlertTriangle}
-            variant={stats.lowStockCount > 0 ? 'warning' : 'default'}
-            description="Items below threshold"
-          />
+        {/* Visual Intelligence Charts */}
+        <div className="grid gap-6 lg:grid-cols-3">
+          {/* Sales Trend - Interactive */}
+          <div className="glass-card rounded-2xl p-6 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 shadow-md flex flex-col min-h-[320px] hover:-translate-y-1 hover:shadow-xl hover:border-[#4F8CFF]/50 transition-all duration-150 ease-out group col-span-1 lg:col-span-1 gpu-smooth">
+            <div className="w-full mb-4">
+              <div className="flex items-start justify-between gap-2 mb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-wide flex items-center gap-2"><ShoppingCart className="w-4 h-4 text-[#4F8CFF]" /> Sales Trend</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Unit sales over time</p>
+                </div>
+                {/* Range selector */}
+                <div className="flex items-center gap-1 bg-slate-100 dark:bg-[#0B0F19]/60 p-1 rounded-lg border border-slate-200 dark:border-white/5">
+                  {(['day', 'week', 'month', 'quarter', 'year'] as const).map(r => (
+                    <button
+                      key={r}
+                      onClick={() => setSalesRange(r)}
+                      className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded-md transition-all duration-200 ${salesRange === r
+                          ? 'bg-[#4F8CFF] text-white shadow-sm'
+                          : 'text-slate-500 hover:text-slate-800 dark:hover:text-white'
+                        }`}
+                    >
+                      {r === 'quarter' ? 'Qtr' : r.charAt(0).toUpperCase() + r.slice(1, 3)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="w-full flex-1 h-[200px] relative">
+              {!salesHasValues && (
+                <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500 dark:text-slate-400">
+                  No sales data for this range
+                </div>
+              )}
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={salesTrend.length ? salesTrend : [{ name: 'No data', Units: 0 }]} margin={{ top: 5, right: 10, left: -25, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.08)" />
+                  <XAxis dataKey="name" tick={{ fill: '#94A3B8', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#94A3B8', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <RechartsTooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(79,140,255,0.2)', strokeWidth: 1 }} />
+                  <Line type="monotone" dataKey="Units" stroke={salesHasValues ? "#4F8CFF" : "rgba(148,163,184,0.35)"} strokeWidth={2.5} dot={false} activeDot={{ r: 4, fill: '#4F8CFF', strokeWidth: 0 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Tickets Overview Bar - moved second */}
+          <div className="glass-card rounded-2xl p-6 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 shadow-md flex flex-col min-h-[300px] hover:-translate-y-1 hover:shadow-xl hover:border-[#4F8CFF]/50 transition-all duration-150 ease-out group gpu-smooth">
+            <div className="w-full mb-4">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-wide flex items-center gap-2"><Wrench className="w-4 h-4 text-[#4F8CFF]" /> Ticket Status Distribution</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Active, resolved, and in-progress volume</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <div className="flex items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-[12px] font-semibold text-amber-500">
+                <span className="h-2 w-2 rounded-full bg-amber-500" />
+                Active {stats.openTickets}
+              </div>
+              <div className="flex items-center gap-2 rounded-full border border-[#4F8CFF]/20 bg-[#4F8CFF]/10 px-3 py-1 text-[12px] font-semibold text-[#4F8CFF]">
+                <span className="h-2 w-2 rounded-full bg-[#4F8CFF]" />
+                In-Progress {stats.inProgressTickets}
+              </div>
+              <div className="flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[12px] font-semibold text-emerald-400">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                Resolved {stats.closedToday}
+              </div>
+            </div>
+            <div className="w-full h-[200px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={ticketData.length ? ticketData : [{ name: 'No Data', value: 0 }]} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="name" tick={{ fill: '#94A3B8', fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis hide />
+                  <RechartsTooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.02)' }} />
+                  <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                    {ticketData.length ? ticketData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    )) : <Cell fill="#4F8CFF" />}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Stock Movement */}
+          <div className="glass-card rounded-2xl p-6 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 shadow-md flex flex-col min-h-[300px] hover:-translate-y-1 hover:shadow-xl hover:border-[#4F8CFF]/50 transition-all duration-150 ease-out group gpu-smooth">
+            <div className="w-full mb-6">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-wide">Stock Movement</h3>
+              <p className="text-xs text-slate-600 dark:text-slate-500 dark:text-slate-400">Total units moved today</p>
+            </div>
+            <div className="w-full h-[200px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={stockMoveData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="name" tick={{ fill: '#94A3B8', fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#94A3B8', fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <RechartsTooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.02)' }} />
+                  <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                    {
+                      stockMoveData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={index === 0 ? '#22C55E' : '#EF4444'} />
+                      ))
+                    }
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
         </div>
 
         {/* Detail panels */}
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-2 mt-4">
           <RecentTickets tickets={recentTickets} />
           <LowStockAlert items={lowStockItems} />
         </div>

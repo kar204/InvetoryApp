@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Recycle, PackageOpen, Check } from 'lucide-react';
+import { Search, Recycle, PackageOpen, Check, TrendingUp, TrendingDown } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -119,52 +119,56 @@ export default function Scrap() {
     e.scrap_model.toLowerCase().includes(search.toLowerCase())
   ));
 
-  const totalInValue = entries.filter(e => e.status === 'IN').reduce((s, e) => s + e.scrap_value, 0);
-  const totalOutValue = entries.filter(e => e.status === 'OUT').reduce((s, e) => s + e.scrap_value, 0);
+  const totalInUnits = entries.filter(e => e.status === 'IN').reduce((s, e) => s + (e.quantity || 0), 0);
+  const totalOutUnits = entries.filter(e => e.status === 'OUT').reduce((s, e) => s + (e.quantity || 0), 0);
 
   const renderTable = (items: ScrapEntry[], showMarkOut: boolean) => (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Customer</TableHead>
-          <TableHead>Category</TableHead>
-          <TableHead>Model</TableHead>
-          <TableHead className="text-right">Qty</TableHead>
-          <TableHead className="text-right">Value (₹)</TableHead>
-          <TableHead>Date</TableHead>
-          <TableHead>Status</TableHead>
-          {showMarkOut && canManage && <TableHead className="w-[100px]">Action</TableHead>}
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {items.length === 0 ? (
-          <TableRow>
-            <TableCell colSpan={showMarkOut && canManage ? 8 : 7} className="text-center text-muted-foreground py-8">
-              No entries found
-            </TableCell>
+    <div className="overflow-x-auto">
+      <Table className="w-full text-sm">
+        <TableHeader className="bg-slate-50 dark:bg-[#0B0F19]">
+          <TableRow className="border-slate-200 dark:border-white/5 hover:bg-transparent">
+            <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs py-4">Customer</TableHead>
+            <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs py-4">Category</TableHead>
+            <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs py-4">Model</TableHead>
+            <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs text-right py-4">Qty</TableHead>
+            <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs text-right py-4">Value (₹)</TableHead>
+            <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs py-4">Date</TableHead>
+            <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs py-4">Status</TableHead>
+            {showMarkOut && canManage && <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs w-[120px] py-4">Action</TableHead>}
           </TableRow>
-        ) : items.map(entry => (
-          <TableRow key={entry.id}>
-            <TableCell className="font-medium">{entry.customer_name}</TableCell>
-            <TableCell><Badge variant="outline">{entry.scrap_item}</Badge></TableCell>
-            <TableCell>{entry.scrap_model}</TableCell>
-            <TableCell className="text-right">{entry.quantity}</TableCell>
-            <TableCell className="text-right">₹{entry.scrap_value.toLocaleString('en-IN')}</TableCell>
-            <TableCell>{format(new Date(entry.created_at), 'dd/MM/yyyy')}</TableCell>
-            <TableCell>
-              <Badge variant={entry.status === 'IN' ? 'default' : 'secondary'}>{entry.status}</Badge>
-            </TableCell>
-            {showMarkOut && canManage && (
-              <TableCell>
-                <Button variant="outline" size="sm" onClick={() => setEntryToMarkOut(entry)}>
-                  <Check className="h-3 w-3 mr-1" /> Mark Out
-                </Button>
+        </TableHeader>
+        <TableBody>
+          {items.length === 0 ? (
+            <TableRow className="border-slate-200 dark:border-white/5">
+              <TableCell colSpan={showMarkOut && canManage ? 8 : 7} className="text-center text-slate-600 dark:text-slate-500 py-12 font-medium">
+                No entries found
               </TableCell>
-            )}
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+            </TableRow>
+          ) : items.map((entry, i) => (
+            <TableRow key={entry.id} className="group border-slate-200 dark:border-white/5 hover:bg-white dark:bg-[#111827] transition-colors duration-300">
+              <TableCell className="font-semibold text-slate-800 dark:text-slate-200 py-4">{entry.customer_name}</TableCell>
+              <TableCell><Badge variant="outline" className="bg-white dark:bg-[#111827] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-white/5">{entry.scrap_item}</Badge></TableCell>
+              <TableCell className="text-slate-600 dark:text-slate-500 dark:text-slate-400">{entry.scrap_model}</TableCell>
+              <TableCell className="text-right font-bold text-slate-900 dark:text-white tabular-nums drop-shadow-sm">{entry.quantity}</TableCell>
+              <TableCell className="text-right font-medium text-emerald-400 tabular-nums">₹{entry.scrap_value.toLocaleString('en-IN')}</TableCell>
+              <TableCell className="text-slate-600 dark:text-slate-500 text-sm tabular-nums">{format(new Date(entry.created_at), 'dd/MM/yyyy')}</TableCell>
+              <TableCell>
+                <Badge variant="outline" className={entry.status === 'IN' ? 'bg-[#4F8CFF]/10 text-[#4F8CFF] border-[#4F8CFF]/20 font-bold tracking-wider' : 'bg-slate-500/10 text-slate-600 dark:text-slate-500 dark:text-slate-400 border-slate-500/20 font-bold tracking-wider'}>
+                  {entry.status}
+                </Badge>
+              </TableCell>
+              {showMarkOut && canManage && (
+                <TableCell>
+                  <Button variant="outline" size="sm" onClick={() => setEntryToMarkOut(entry)} className="opacity-0 group-hover:opacity-100 transition-opacity bg-transparent hover:bg-emerald-500/10 hover:text-emerald-400 border-slate-200 dark:border-white/10 hover:border-emerald-500/30">
+                    <Check className="h-4 w-4 mr-1" /> Mark Out
+                  </Button>
+                </TableCell>
+              )}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 
   return (
@@ -218,26 +222,36 @@ export default function Scrap() {
         </div>
 
         {/* Stats */}
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Scrap In Stock</CardTitle>
-              <PackageOpen className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent><div className="text-2xl font-bold">{entries.filter(e => e.status === 'IN').reduce((s, e) => s + e.quantity, 0)}</div></CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Total In Value</CardTitle>
-            </CardHeader>
-            <CardContent><div className="text-2xl font-bold">₹{totalInValue.toLocaleString('en-IN')}</div></CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Total Out Value</CardTitle>
-            </CardHeader>
-            <CardContent><div className="text-2xl font-bold">₹{totalOutValue.toLocaleString('en-IN')}</div></CardContent>
-          </Card>
+        <div className="grid gap-6 grid-cols-1 sm:grid-cols-3 mb-8">
+          <div className="relative overflow-hidden rounded-2xl bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 p-6 group hover:border-[#4F8CFF]/30 transition-colors duration-500">
+            <div className="absolute -right-6 -top-6 text-[#4F8CFF]/5 transform group-hover:scale-110 group-hover:rotate-6 transition-transform duration-700">
+              <PackageOpen className="w-32 h-32" />
+            </div>
+            <div className="relative z-10">
+              <p className="text-[11px] font-bold tracking-widest text-slate-600 dark:text-slate-500 uppercase mb-3 drop-shadow-sm">Scrap In Stock</p>
+              <div className="text-4xl font-black text-slate-900 dark:text-white">{entries.filter(e => e.status === 'IN').reduce((s, e) => s + e.quantity, 0)}</div>
+            </div>
+          </div>
+
+          <div className="relative overflow-hidden rounded-2xl bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 p-6 group hover:border-emerald-500/30 transition-colors duration-500">
+            <div className="absolute -right-6 -top-6 text-emerald-500/5 transform group-hover:scale-110 group-hover:rotate-6 transition-transform duration-700">
+              <TrendingDown className="w-32 h-32" />
+            </div>
+            <div className="relative z-10">
+              <p className="text-[11px] font-bold tracking-widest text-slate-600 dark:text-slate-500 uppercase mb-3 drop-shadow-sm">Total In Units</p>
+              <div className="text-4xl font-black text-slate-900 dark:text-white">{totalInUnits.toLocaleString('en-IN')}</div>
+            </div>
+          </div>
+
+          <div className="relative overflow-hidden rounded-2xl bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 p-6 group hover:border-amber-500/30 transition-colors duration-500">
+            <div className="absolute -right-6 -top-6 text-amber-500/5 transform group-hover:scale-110 group-hover:rotate-6 transition-transform duration-700">
+              <TrendingUp className="w-32 h-32" />
+            </div>
+            <div className="relative z-10">
+              <p className="text-[11px] font-bold tracking-widest text-slate-600 dark:text-slate-500 uppercase mb-3 drop-shadow-sm">Total Out Units</p>
+              <div className="text-4xl font-black text-slate-900 dark:text-white">{totalOutUnits.toLocaleString('en-IN')}</div>
+            </div>
+          </div>
         </div>
 
         <div className="relative">
@@ -250,16 +264,16 @@ export default function Scrap() {
             <div className="animate-pulse text-muted-foreground">Loading scrap entries...</div>
           </div>
         ) : (
-          <Tabs defaultValue="in">
-            <TabsList>
-              <TabsTrigger value="in">In Stock ({inEntries.length})</TabsTrigger>
-              <TabsTrigger value="out">Out ({outEntries.length})</TabsTrigger>
+          <Tabs defaultValue="in" className="w-full">
+            <TabsList className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-white/5 p-1 rounded-xl w-fit">
+              <TabsTrigger value="in" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-[#4F8CFF] data-[state=active]:shadow-sm">In Stock ({inEntries.length})</TabsTrigger>
+              <TabsTrigger value="out" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-[#4F8CFF] data-[state=active]:shadow-sm">Out ({outEntries.length})</TabsTrigger>
             </TabsList>
-            <TabsContent value="in">
-              <Card><CardContent className="pt-6">{renderTable(inEntries, true)}</CardContent></Card>
+            <TabsContent value="in" className="mt-4">
+              <div className="rounded-2xl border border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-[#0B0F19] overflow-hidden shadow-sm">{renderTable(inEntries, true)}</div>
             </TabsContent>
-            <TabsContent value="out">
-              <Card><CardContent className="pt-6">{renderTable(outEntries, false)}</CardContent></Card>
+            <TabsContent value="out" className="mt-4">
+              <div className="rounded-2xl border border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-[#0B0F19] overflow-hidden shadow-sm">{renderTable(outEntries, false)}</div>
             </TabsContent>
           </Tabs>
         )}

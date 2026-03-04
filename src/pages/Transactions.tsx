@@ -78,10 +78,20 @@ export default function Transactions() {
     return profile?.name || 'Unknown';
   };
 
-  const filteredTransactions = transactions.filter(trans =>
-    trans.product?.name?.toLowerCase().includes(search.toLowerCase()) ||
-    trans.remarks?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredTransactions = transactions.filter(trans => {
+    const searchLower = search.trim().toLowerCase();
+    if (!searchLower) return true;
+
+    const productName = trans.product?.name?.toLowerCase() || '';
+    const productModel = trans.product?.model?.toLowerCase() || '';
+    const remarks = trans.remarks?.toLowerCase() || '';
+    const source = trans.source?.toLowerCase() || '';
+    const type = trans.transaction_type?.toLowerCase() || '';
+    const combinedName = `${productName} ${productModel} ${remarks} ${source} ${type}`;
+
+    const searchTerms = searchLower.split(/\s+/);
+    return searchTerms.every(term => combinedName.includes(term));
+  });
 
   // Build dual IN/OUT rows for scrap transactions
   const scrapTransactionRows: ScrapTransactionRow[] = [];
@@ -116,11 +126,19 @@ export default function Transactions() {
   // Sort by date descending
   scrapTransactionRows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  const filteredScrapRows = scrapTransactionRows.filter(row =>
-    row.customer_name.toLowerCase().includes(search.toLowerCase()) ||
-    row.scrap_item.toLowerCase().includes(search.toLowerCase()) ||
-    row.scrap_model.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredScrapRows = scrapTransactionRows.filter(row => {
+    const searchLower = search.trim().toLowerCase();
+    if (!searchLower) return true;
+
+    const customer = row.customer_name.toLowerCase();
+    const item = row.scrap_item.toLowerCase();
+    const model = row.scrap_model.toLowerCase();
+    const type = row.type.toLowerCase();
+    const combined = `${customer} ${item} ${model} ${type}`;
+
+    const searchTerms = searchLower.split(/\s+/);
+    return searchTerms.every(term => combined.includes(term));
+  });
 
   return (
     <AppLayout>
@@ -145,134 +163,108 @@ export default function Transactions() {
             <div className="animate-pulse text-muted-foreground">Loading transactions...</div>
           </div>
         ) : (
-          <Tabs defaultValue="stock">
-            <TabsList>
-              <TabsTrigger value="stock">Stock Transactions ({filteredTransactions.length})</TabsTrigger>
-              <TabsTrigger value="scrap">Scrap Transactions ({filteredScrapRows.length})</TabsTrigger>
+          <Tabs defaultValue="stock" className="w-full">
+            <TabsList className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-white/5 p-1 rounded-xl w-fit mb-4">
+              <TabsTrigger value="stock" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-[#4F8CFF] data-[state=active]:shadow-sm">Stock Transactions ({filteredTransactions.length})</TabsTrigger>
+              <TabsTrigger value="scrap" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-[#4F8CFF] data-[state=active]:shadow-sm">Scrap Transactions ({filteredScrapRows.length})</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="stock">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Stock Transaction History</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Product</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Source</TableHead>
-                        <TableHead className="text-right">Quantity</TableHead>
-                        <TableHead>Handled By</TableHead>
-                        <TableHead>Remarks</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredTransactions.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                            No transactions found
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        filteredTransactions.map((trans) => (
-                          <TableRow key={trans.id}>
-                            <TableCell className="text-muted-foreground">
-                              {format(new Date(trans.created_at), 'MMM dd, yyyy HH:mm')}
-                            </TableCell>
-                            <TableCell className="font-medium">
-                              {trans.product?.name} - {trans.product?.model}
-                            </TableCell>
-                            <TableCell>
-                              {trans.transaction_type === 'IN' ? (
-                                <Badge variant="outline" className="gap-1 bg-chart-4/20 text-chart-4 border-chart-4/30">
-                                  <ArrowUpCircle className="h-3 w-3" />
-                                  Stock In
+            <TabsContent value="stock" className="mt-4">
+              <div className="space-y-6 relative before:absolute before:left-[70px] sm:before:left-[110px] before:top-2 before:bottom-2 before:w-px before:bg-white/10 ml-0 sm:ml-4 animate-in fade-in duration-500 pb-12">
+                {filteredTransactions.length === 0 ? (
+                  <div className="text-center text-slate-600 dark:text-slate-500 py-12 font-medium">No transactions found</div>
+                ) : (
+                  filteredTransactions.map((trans) => {
+                    const isIn = trans.transaction_type === 'IN';
+                    const typeColor = isIn ? 'text-[#4F8CFF] bg-[#4F8CFF]/10 border-[#4F8CFF]/20 shadow-[0_0_10px_rgba(79,140,255,0.2)]' : 'text-red-400 bg-red-400/10 border-red-400/20 shadow-[0_0_10px_rgba(248,113,113,0.2)]';
+                    const qtyColor = isIn ? 'text-[#4F8CFF]' : 'text-red-400';
+                    const sign = isIn ? '+' : '-';
+
+                    return (
+                      <div key={trans.id} className="relative flex gap-4 sm:gap-8 items-start group overflow-hidden sm:overflow-visible p-1 sm:p-0">
+                        <div className="w-14 sm:w-20 shrink-0 text-right pt-4 relative z-10 pl-0 sm:pl-2">
+                          <div className="text-[11px] font-bold text-slate-600 dark:text-slate-500 dark:text-slate-400 uppercase tracking-widest leading-tight">{format(new Date(trans.created_at), 'MMM dd')}</div>
+                          <div className="text-[10px] text-slate-600 dark:text-slate-500 font-medium">{format(new Date(trans.created_at), 'HH:mm')}</div>
+                          <div className="absolute right-[-23px] sm:right-[-37px] top-5 w-3 h-3 rounded-full bg-white dark:bg-[#111827] border-2 border-[#4F8CFF] shadow-[0_0_8px_rgba(79,140,255,0.5)] group-hover:scale-[1.7] transition-transform duration-300" />
+                        </div>
+                        <div className="flex-1 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-2xl p-6 hover:-translate-y-1 hover:bg-slate-50 dark:bg-[#151C2F] hover:border-[#4F8CFF]/30 hover:shadow-[0_8px_32px_rgba(0,0,0,0.3)] transition-all duration-300 cursor-pointer">
+                          <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <h3 className="font-bold text-slate-800 dark:text-slate-200 text-lg tracking-wide group-hover:text-slate-900 dark:hover:text-white transition-colors">{trans.product?.name} <span className="font-normal text-slate-600 dark:text-slate-500 dark:text-slate-400 text-sm ml-1">- {trans.product?.model}</span></h3>
+                                <Badge variant="outline" className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider font-bold ${typeColor}`}>
+                                  {isIn ? 'STOCK IN' : 'STOCK OUT'}
                                 </Badge>
-                              ) : (
-                                <Badge variant="outline" className="gap-1 bg-destructive/20 text-destructive border-destructive/30">
-                                  <ArrowDownCircle className="h-3 w-3" />
-                                  Stock Out
-                                </Badge>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="secondary">{trans.source}</Badge>
-                            </TableCell>
-                            <TableCell className="text-right font-medium">{trans.quantity}</TableCell>
-                            <TableCell>{getProfileName(trans.handled_by)}</TableCell>
-                            <TableCell className="text-muted-foreground max-w-[200px] truncate">
-                              {trans.remarks || '-'}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
+                                <Badge variant="outline" className="bg-slate-50 dark:bg-[#0B0F19] text-slate-600 dark:text-slate-500 dark:text-slate-400 border-slate-200 dark:border-white/10">{trans.source}</Badge>
+                              </div>
+                              <p className="text-[13px] text-slate-600 dark:text-slate-500 max-w-lg truncate italic group-hover:text-slate-600 dark:text-slate-500 dark:text-slate-400 transition-colors">"{trans.remarks || 'No remarks provided'}"</p>
+                            </div>
+                            <div className="flex flex-col items-end gap-1 shrink-0">
+                              <div className={`text-2xl font-black drop-shadow-md tracking-tight ${qtyColor}`}>
+                                {sign}{trans.quantity}
+                              </div>
+                              <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold">By {getProfileName(trans.handled_by)}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </TabsContent>
 
-            <TabsContent value="scrap">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Scrap Transaction History</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Customer</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Model</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead className="text-right">Qty</TableHead>
-                        <TableHead className="text-right">Value (₹)</TableHead>
-                        <TableHead>By</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredScrapRows.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                            No scrap transactions found
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        filteredScrapRows.map((row) => (
-                          <TableRow key={row.key}>
-                            <TableCell className="text-muted-foreground">
-                              {format(new Date(row.date), 'MMM dd, yyyy HH:mm')}
-                            </TableCell>
-                            <TableCell className="font-medium">{row.customer_name}</TableCell>
-                            <TableCell><Badge variant="outline">{row.scrap_item}</Badge></TableCell>
-                            <TableCell>{row.scrap_model}</TableCell>
-                            <TableCell>
-                              {row.type === 'IN' ? (
-                                <Badge variant="outline" className="gap-1 bg-chart-4/20 text-chart-4 border-chart-4/30">
-                                  <ArrowUpCircle className="h-3 w-3" />
-                                  IN
+            <TabsContent value="scrap" className="mt-4">
+              <div className="space-y-6 relative before:absolute before:left-[70px] sm:before:left-[110px] before:top-2 before:bottom-2 before:w-px before:bg-white/10 ml-0 sm:ml-4 animate-in fade-in duration-500 pb-12">
+                {filteredScrapRows.length === 0 ? (
+                  <div className="text-center text-slate-600 dark:text-slate-500 py-12 font-medium">No scrap transactions found</div>
+                ) : (
+                  filteredScrapRows.map((row) => {
+                    const isIn = row.type === 'IN';
+                    const typeColor = isIn ? 'text-[#4F8CFF] bg-[#4F8CFF]/10 border-[#4F8CFF]/20 shadow-[0_0_10px_rgba(79,140,255,0.2)]' : 'text-amber-500 bg-amber-500/10 border-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.2)]';
+                    const qtyColor = isIn ? 'text-[#4F8CFF]' : 'text-amber-500';
+                    const sign = isIn ? '+' : '-';
+
+                    return (
+                      <div key={row.key} className="relative flex gap-4 sm:gap-8 items-start group overflow-hidden sm:overflow-visible p-1 sm:p-0">
+                        <div className="w-14 sm:w-20 shrink-0 text-right pt-4 relative z-10 pl-0 sm:pl-2">
+                          <div className="text-[11px] font-bold text-slate-600 dark:text-slate-500 dark:text-slate-400 uppercase tracking-widest leading-tight">{format(new Date(row.date), 'MMM dd')}</div>
+                          <div className="text-[10px] text-slate-600 dark:text-slate-500 font-medium">{format(new Date(row.date), 'HH:mm')}</div>
+                          <div className={`absolute right-[-23px] sm:right-[-37px] top-5 w-3 h-3 rounded-full border-2 bg-white dark:bg-[#111827] group-hover:scale-[1.7] transition-transform duration-300 ${isIn ? 'border-[#4F8CFF] shadow-[0_0_8px_rgba(79,140,255,0.5)]' : 'border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]'}`} />
+                        </div>
+                        <div className="flex-1 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-2xl p-6 hover:-translate-y-1 hover:bg-slate-50 dark:bg-[#151C2F] hover:border-[#4F8CFF]/30 hover:shadow-[0_8px_32px_rgba(0,0,0,0.3)] transition-all duration-300 cursor-pointer">
+                          <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <h3 className="font-bold text-slate-800 dark:text-slate-200 text-lg tracking-wide group-hover:text-slate-900 dark:hover:text-white transition-colors">{row.customer_name}</h3>
+                                <Badge variant="outline" className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider font-bold ${typeColor}`}>
+                                  SCRAP {row.type}
                                 </Badge>
-                              ) : (
-                                <Badge variant="outline" className="gap-1 bg-destructive/20 text-destructive border-destructive/30">
-                                  <ArrowDownCircle className="h-3 w-3" />
-                                  OUT
-                                </Badge>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right">{row.quantity}</TableCell>
-                            <TableCell className="text-right font-medium">₹{row.scrap_value.toLocaleString('en-IN')}</TableCell>
-                            <TableCell>{getProfileName(row.recorded_by)}</TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
+                                <Badge variant="outline" className="bg-slate-50 dark:bg-[#0B0F19] text-slate-600 dark:text-slate-500 dark:text-slate-400 border-slate-200 dark:border-white/10">{row.scrap_item}</Badge>
+                              </div>
+                              <p className="text-[13px] text-slate-600 dark:text-slate-500 max-w-lg truncate">{row.scrap_model}</p>
+                            </div>
+                            <div className="flex items-center gap-8 border-t sm:border-t-0 sm:border-l border-slate-200 dark:border-white/10 pt-4 sm:pt-0 sm:pl-6 mt-2 sm:mt-0">
+                              <div className="text-right">
+                                <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold mb-1">Value</p>
+                                <div className="text-lg font-bold text-emerald-400 drop-shadow-md tracking-tight">₹{row.scrap_value.toLocaleString('en-IN')}</div>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold mb-1">Qty</p>
+                                <div className={`text-xl font-black drop-shadow-md tracking-tight ${qtyColor}`}>{sign}{row.quantity}</div>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold mb-1">By</p>
+                                <p className="text-xs font-medium text-slate-700 dark:text-slate-300">{getProfileName(row.recorded_by)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </TabsContent>
           </Tabs>
         )}

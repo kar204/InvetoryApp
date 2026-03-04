@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { Plus, Minus, Search, Package, ArrowUpCircle, ArrowDownCircle, Download, Trash2, X, Upload } from 'lucide-react';
+import { Plus, Minus, Search, Package, ArrowUpCircle, ArrowDownCircle, Download, Trash2, X, Upload, ShoppingCart, AlertTriangle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
@@ -38,9 +38,18 @@ export default function Inventory() {
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [isStockTransferOpen, setIsStockTransferOpen] = useState(false);
+  const [isRecordSaleOpen, setIsRecordSaleOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [activeTab, setActiveTab] = useState<'inventory' | 'sales'>('inventory');
+  const [sales, setSales] = useState<any[]>([]);
+  const [salesLoading, setSalesLoading] = useState(false);
+  const [stockTransactions, setStockTransactions] = useState<any[]>([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
+  const [historyTab, setHistoryTab] = useState<'sales' | 'transfers'>('sales');
+  const [profiles, setProfiles] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [transferProductSearch, setTransferProductSearch] = useState('');
+  const [saleProductSearch, setSaleProductSearch] = useState('');
 
   // Product form
   const [productForm, setProductForm] = useState({
@@ -51,14 +60,21 @@ export default function Inventory() {
     initialQuantity: '',
   });
 
-  // Stock transfer form
+  // Stock transfer form (Simplified to Stock In only)
   const [transferForm, setTransferForm] = useState({
-    transaction_type: 'IN' as TransactionType | '',
-    source: 'WAREHOUSE' as StockSource | '',
+    transaction_type: 'IN' as TransactionType,
+    source: 'WAREHOUSE' as StockSource,
     remarks: '',
   });
 
+  // Sale form
+  const [saleForm, setSaleForm] = useState({
+    customer_name: '',
+    payment_method: 'CASH',
+  });
+
   const [transferItems, setTransferItems] = useState<{ productId: string; quantity: number }[]>([]);
+  const [saleItems, setSaleItems] = useState<{ productId: string; quantity: number; price: number }[]>([]);
 
   // Role-based restrictions
   const isWarehouseStaff = hasRole('warehouse_staff');
@@ -67,18 +83,85 @@ export default function Inventory() {
 
   useEffect(() => {
     fetchData();
+    fetchSales();
+    fetchStockTransactions();
+    fetchProfiles();
 
-    const channel = supabase
+    const stockChannel = supabase
       .channel('inventory-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'warehouse_stock' }, () => {
         fetchData();
       })
       .subscribe();
 
+    const salesChannel = supabase
+      .channel('sales-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'warehouse_sales' }, () => {
+        fetchSales();
+      })
+      .subscribe();
+
+    const transactionsChannel = supabase
+      .channel('transactions-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_transactions' }, () => {
+        fetchStockTransactions();
+      })
+      .subscribe();
+
     return () => {
-      channel.unsubscribe();
+      stockChannel.unsubscribe();
+      salesChannel.unsubscribe();
+      transactionsChannel.unsubscribe();
     };
   }, []);
+
+  const fetchProfiles = async () => {
+    try {
+      const { data } = await supabase.from('profiles').select('*');
+      setProfiles(data || []);
+    } catch (err) {
+      console.error('Error fetching profiles:', err);
+    }
+  };
+
+  const fetchStockTransactions = async () => {
+    setTransactionsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('stock_transactions')
+        .select('*, product:products(*)')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setStockTransactions(data || []);
+    } catch (error) {
+      console.error('Error fetching transactions:', error);
+    } finally {
+      setTransactionsLoading(false);
+    }
+  };
+
+  const getProfileName = (userId: string) => {
+    const profile = profiles.find(p => p.id === userId || p.user_id === userId);
+    return profile?.name || 'N/A';
+  };
+
+  const fetchSales = async () => {
+    setSalesLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('warehouse_sales')
+        .select('*, items:warehouse_sale_items(*, product:products(*))')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setSales(data || []);
+    } catch (error) {
+      console.error('Error fetching sales:', error);
+    } finally {
+      setSalesLoading(false);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -135,7 +218,7 @@ export default function Inventory() {
 
   const handleDeleteProduct = async () => {
     if (!productToDelete) return;
-    
+
     try {
       await supabase
         .from('warehouse_stock')
@@ -175,7 +258,8 @@ export default function Inventory() {
   const setTransferQuantity = (productId: string, quantity: number) => {
     setTransferItems(transferItems.map(item => {
       if (item.productId === productId) {
-        return { ...item, quantity: Math.max(1, quantity) };
+        // Allow 0 while typing, but enforce 1 as minimum for processing
+        return { ...item, quantity: isNaN(quantity) ? 0 : Math.max(0, quantity) };
       }
       return item;
     }));
@@ -189,6 +273,124 @@ export default function Inventory() {
       }
       return item;
     }));
+  };
+
+  // Sale item management
+  const addProductToSale = (productId: string) => {
+    if (!productId) return;
+    if (saleItems.some(item => item.productId === productId)) {
+      toast({ title: 'Product already added', variant: 'destructive' });
+      return;
+    }
+    const product = products.find(p => p.id === productId);
+    setSaleItems([...saleItems, { productId, quantity: 1, price: 0 }]);
+    setSaleProductSearch('');
+  };
+
+  const removeProductFromSale = (productId: string) => {
+    setSaleItems(saleItems.filter(item => item.productId !== productId));
+  };
+
+  const setSaleQuantity = (productId: string, quantity: number) => {
+    const stockItem = stock.find(s => s.product_id === productId);
+    const available = stockItem?.quantity || 0;
+
+    if (quantity > available) {
+      toast({ title: 'Insufficient stock', description: `Only ${available} available`, variant: 'destructive' });
+      quantity = available;
+    }
+
+    setSaleItems(saleItems.map(item => {
+      if (item.productId === productId) {
+        // Allow 0 while typing
+        return { ...item, quantity: isNaN(quantity) ? 0 : Math.max(0, quantity) };
+      }
+      return item;
+    }));
+  };
+
+  const setSalePrice = (productId: string, price: number) => {
+    setSaleItems(saleItems.map(item => {
+      if (item.productId === productId) {
+        return { ...item, price: Math.max(0, price) };
+      }
+      return item;
+    }));
+  };
+
+  const handleRecordSale = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!user || saleItems.length === 0 || !saleForm.customer_name) {
+      toast({ title: 'Please fill all fields and add at least one product', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      const totalAmount = saleItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+      const { data: sale, error: saleError } = await supabase
+        .from('warehouse_sales')
+        .insert({
+          customer_name: saleForm.customer_name,
+          payment_method: saleForm.payment_method,
+          sold_by: user.id,
+          total_amount: totalAmount,
+        })
+        .select()
+        .single();
+
+      if (saleError) throw saleError;
+
+      const saleItemRecords = saleItems.map(item => {
+        const product = products.find(p => p.id === item.productId);
+        return {
+          sale_id: sale.id,
+          product_id: item.productId,
+          model_number: product?.model || 'N/A',
+          product_type: product?.category || 'Battery',
+          quantity: item.quantity,
+          price: item.price,
+        };
+      });
+
+      const { error: itemsError } = await supabase
+        .from('warehouse_sale_items')
+        .insert(saleItemRecords);
+
+      if (itemsError) throw itemsError;
+
+      // Update stock quantities
+      for (const item of saleItems) {
+        const currentStock = stock.find(s => s.product_id === item.productId);
+        if (currentStock) {
+          const newQty = Math.max(0, currentStock.quantity - item.quantity);
+          await supabase
+            .from('warehouse_stock')
+            .update({ quantity: newQty })
+            .eq('id', currentStock.id);
+
+          // Also record as a stock transaction for full history
+          await supabase.from('stock_transactions').insert({
+            product_id: item.productId,
+            quantity: item.quantity,
+            transaction_type: 'OUT',
+            source: 'WAREHOUSE',
+            remarks: `Sale to ${saleForm.customer_name}`,
+            handled_by: user.id
+          });
+        }
+      }
+
+      toast({ title: 'Sale recorded successfully', description: `Recorded sale for ${saleForm.customer_name}` });
+      setIsRecordSaleOpen(false);
+      setSaleForm({ customer_name: '', payment_method: 'CASH' });
+      setSaleItems([]);
+      fetchData();
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      toast({ title: 'Error recording sale', description: errorMessage, variant: 'destructive' });
+    }
   };
 
   const handleStockTransfer = async (e: React.FormEvent) => {
@@ -214,8 +416,8 @@ export default function Inventory() {
 
         const currentStock = stock.find(s => s.product_id === item.productId);
         const currentQty = currentStock?.quantity || 0;
-        const newQty = transferForm.transaction_type === 'IN' 
-          ? currentQty + item.quantity 
+        const newQty = transferForm.transaction_type === 'IN'
+          ? currentQty + item.quantity
           : Math.max(0, currentQty - item.quantity);
 
         if (currentStock) {
@@ -228,12 +430,12 @@ export default function Inventory() {
         }
       }
 
-      toast({ 
+      toast({
         title: 'Stock transfer completed',
         description: `Processed ${transferItems.length} items successfully`
       });
       setIsStockTransferOpen(false);
-      setTransferForm({ transaction_type: 'IN', source: '', remarks: '' });
+      setTransferForm({ transaction_type: 'IN', source: 'WAREHOUSE', remarks: '' });
       setTransferItems([]);
       fetchData();
     } catch (error: unknown) {
@@ -243,15 +445,20 @@ export default function Inventory() {
   };
 
   const filteredStock = stock.filter(item => {
-    const matchesSearch = item.product?.name?.toLowerCase().includes(search.toLowerCase()) ||
-      item.product?.model?.toLowerCase().includes(search.toLowerCase());
-    
+    const searchLower = search.toLowerCase();
+    const productName = item.product?.name?.toLowerCase() || '';
+    const productModel = item.product?.model?.toLowerCase() || '';
+    const combined = `${productName} ${productModel}`;
+    const matchesSearch = productName.includes(searchLower) ||
+      productModel.includes(searchLower) ||
+      combined.includes(searchLower);
+
     if (!matchesSearch) return false;
 
     if (stockFilter === 'low') return item.quantity < 5;
     if (stockFilter === 'medium') return item.quantity >= 5 && item.quantity < 20;
     if (stockFilter === 'high') return item.quantity >= 20;
-    
+
     return true;
   });
 
@@ -259,65 +466,92 @@ export default function Inventory() {
     filteredStock.filter(item => (item.product as any)?.category === category);
 
   const renderStockTable = (items: WarehouseStock[]) => (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Product</TableHead>
-          <TableHead>Model</TableHead>
-          <TableHead>Capacity</TableHead>
-          <TableHead className="text-right">Quantity</TableHead>
-          <TableHead>Status</TableHead>
-          {canDeleteProducts && <TableHead className="w-[50px]"></TableHead>}
-        </TableRow>
-      </TableHeader>
-      <TableBody>
+    <div className="w-full bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in duration-500">
+      {/* Grid Header */}
+      <div className="hidden lg:grid grid-cols-[2fr_1.5fr_1fr_1fr_1.5fr_auto] gap-4 p-4 border-b border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-[#0B0F19]/80 sticky top-0 z-10 text-[11px] font-bold text-slate-600 dark:text-slate-500 uppercase tracking-wider backdrop-blur-md">
+        <div>Product</div>
+        <div>Model</div>
+        <div>Capacity</div>
+        <div className="text-right">Quantity</div>
+        <div>Health Status</div>
+        {canDeleteProducts ? <div className="w-8"></div> : <div className="w-0"></div>}
+      </div>
+
+      {/* Grid Body */}
+      <div className="divide-y divide-slate-100 dark:divide-white/5 max-h-[650px] smooth-scroll-list styled-scrollbar pb-8">
         {items.length === 0 ? (
-          <TableRow>
-            <TableCell colSpan={canDeleteProducts ? 6 : 5} className="text-center text-muted-foreground py-8">
-              No products in this category
-            </TableCell>
-          </TableRow>
+          <div className="p-12 text-center text-slate-600 dark:text-slate-500 font-medium flex flex-col items-center justify-center gap-3">
+            <Package className="h-10 w-10 text-slate-700" />
+            No products found in this category
+          </div>
         ) : (
-          items.map((item) => (
-            <TableRow key={item.id}>
-              <TableCell className="font-medium">{item.product?.name}</TableCell>
-              <TableCell>{item.product?.model}</TableCell>
-              <TableCell>{item.product?.capacity || '-'}</TableCell>
-              <TableCell className="text-right font-medium">{item.quantity}</TableCell>
-              <TableCell>
-                {item.quantity < 5 ? (
-                  <Badge variant="destructive" className="gap-1">
-                    <ArrowDownCircle className="h-3 w-3" />
-                    Low Stock
-                  </Badge>
-                ) : item.quantity < 20 ? (
-                  <Badge variant="secondary" className="gap-1">
-                    Medium
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="gap-1 bg-chart-4/20 text-chart-4 border-chart-4/30">
-                    <ArrowUpCircle className="h-3 w-3" />
-                    In Stock
-                  </Badge>
-                )}
-              </TableCell>
-              {canDeleteProducts && (
-                <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-destructive hover:text-destructive"
-                    onClick={() => item.product && setProductToDelete(item.product)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </TableCell>
-              )}
-            </TableRow>
-          ))
+          items.map((item, i) => {
+            const health = item.quantity < 5 ? 'critical' : item.quantity < 20 ? 'warning' : 'good';
+            const healthColor = health === 'critical' ? 'bg-red-500' : health === 'warning' ? 'bg-amber-400' : 'bg-[#4F8CFF]';
+            const healthGlow = health === 'critical' ? 'shadow-[0_0_12px_rgba(239,68,68,0.5)]' : health === 'warning' ? 'shadow-[0_0_10px_rgba(251,191,36,0.3)]' : 'shadow-[0_0_10px_rgba(79,140,255,0.3)]';
+
+            return (
+              <div key={item.id} className="stock-row group relative flex flex-col lg:grid lg:grid-cols-[2fr_1.5fr_1fr_1fr_1.5fr_auto] gap-3 lg:gap-4 p-4 lg:items-center hover:bg-slate-50 dark:hover:bg-[#1B2438]/60 transition-colors duration-150">
+                {/* Row selected indicator line */}
+                <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#4F8CFF] scale-y-0 lg:group-hover:scale-y-100 transition-transform origin-center" />
+
+                {/* Mobile top row: Title and Qty */}
+                <div className="flex justify-between items-center w-full lg:hidden mb-1">
+                  <div className="font-bold text-slate-800 dark:text-slate-200 truncate pr-4 text-[16px]">{item.product?.name}</div>
+                  <div className="text-right font-bold text-[18px] text-slate-900 dark:text-white tabular-nums drop-shadow-sm">{item.quantity} units</div>
+                </div>
+
+                <div className="hidden lg:block font-bold text-slate-800 dark:text-slate-200 truncate pr-4 text-[14px]">{item.product?.name}</div>
+                <div className="text-slate-600 dark:text-slate-500 dark:text-slate-400 text-[13px] truncate flex items-center gap-2"><span className="lg:hidden uppercase text-[10px] font-bold opacity-60">Model</span>{item.product?.model}</div>
+                <div className="text-slate-600 dark:text-slate-500 text-[13px] flex items-center gap-2"><span className="lg:hidden uppercase text-[10px] font-bold opacity-60">Capacity</span>{item.product?.capacity || '-'}</div>
+
+                <div className="hidden lg:block text-right font-bold text-lg text-slate-900 dark:text-white tabular-nums drop-shadow-sm">
+                  {item.quantity}
+                </div>
+
+                <div className="flex flex-col gap-2 relative lg:pl-2 mt-2 lg:mt-0">
+                  <div className="flex items-center gap-2">
+                    {health === 'critical' ? (
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider text-red-500 bg-red-500/10 border border-red-500/20 ${healthGlow} animate-pulse shadow-red-500/20`}>
+                        <AlertTriangle className="h-3 w-3" /> Critical Low
+                      </span>
+                    ) : health === 'warning' ? (
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider text-amber-500 bg-amber-500/10 border border-amber-500/20 ${healthGlow}`}>
+                        <ArrowDownCircle className="h-3 w-3" /> Reorder Soon
+                      </span>
+                    ) : (
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider text-[#4F8CFF] bg-[#4F8CFF]/10 border border-[#4F8CFF]/20 ${healthGlow}`}>
+                        <ArrowUpCircle className="h-3 w-3" /> Healthy Stock
+                      </span>
+                    )}
+                  </div>
+                  {/* Progress bar */}
+                  <div className="h-1.5 w-full max-w-[120px] bg-slate-50 dark:bg-[#0B0F19] rounded-full overflow-hidden shadow-inner hidden sm:block border border-slate-200 dark:border-white/5">
+                    <div
+                      className={`h-full rounded-full ${healthColor} transition-all duration-1000 ease-out`}
+                      style={{ width: `${Math.min(100, (item.quantity / 50) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {canDeleteProducts ? (
+                  <div className="w-8 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-full text-slate-600 dark:text-slate-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                      onClick={() => item.product && setProductToDelete(item.product as Product)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : <div className="w-0"></div>}
+              </div>
+            );
+          })
         )}
-      </TableBody>
-    </Table>
+      </div>
+    </div>
   );
 
   const handleExportAll = () => {
@@ -331,7 +565,7 @@ export default function Inventory() {
       'Product ID': item.product_id,
       'Product Name': item.product?.name || '',
       'Model': item.product?.model || '',
-      'Category': (item.product as any)?.category || '',
+      'Category': item.product?.category || '',
       'Capacity': item.product?.capacity || '',
       'Current Quantity': item.quantity,
       'New Quantity': item.quantity,
@@ -391,7 +625,7 @@ export default function Inventory() {
           const qty = !isNaN(newQty) && newQty >= 0 ? newQty : 0;
           const { data: newProduct, error: productError } = await supabase
             .from('products')
-            .insert({ name: productName, model, category, capacity })
+            .insert({ name: productName, model, category: category || 'Battery', capacity })
             .select()
             .single();
 
@@ -426,49 +660,66 @@ export default function Inventory() {
   const canDeleteProducts = hasRole('admin');
 
   const getTransactionOptions = () => {
-    if (isAdmin) {
-      return {
-        types: [{ value: 'IN', label: 'Stock In' }, { value: 'OUT', label: 'Stock Out' }],
-        sources: [
-          { value: 'SUPPLIER', label: 'Supplier (OEM)' },
-          { value: 'WAREHOUSE', label: 'Warehouse' },
-          { value: 'SHOP', label: 'Shop' }
-        ]
-      };
-    }
-    if (isWarehouseStaff) {
-      return {
-        types: [{ value: 'OUT', label: 'Stock Out' }],
-        sources: [{ value: 'SHOP', label: 'Shop' }]
-      };
-    }
-    if (isProcurementStaff) {
-      return {
-        types: [{ value: 'IN', label: 'Stock In' }],
-        sources: [{ value: 'SUPPLIER', label: 'Supplier (OEM)' }]
-      };
-    }
-    return { types: [], sources: [] };
+    // Only Stock In for destination warehouse
+    return {
+      types: [{ value: 'IN', label: 'Stock In' }],
+      sources: [
+        { value: 'SUPPLIER', label: 'Supplier (OEM)' },
+        { value: 'WAREHOUSE', label: 'Warehouse' }
+      ]
+    };
   };
 
   const transactionOptions = getTransactionOptions();
 
-  // Filtered products for transfer search
+  // Filtered products for transfer/sale search
   const filteredTransferProducts = products.filter(p =>
     !transferItems.some(item => item.productId === p.id) &&
     (p.name.toLowerCase().includes(transferProductSearch.toLowerCase()) ||
-     p.model.toLowerCase().includes(transferProductSearch.toLowerCase()))
+      p.model.toLowerCase().includes(transferProductSearch.toLowerCase()))
   );
+
+  const filteredSaleProducts = products.filter(p => {
+    const stockItem = stock.find(s => s.product_id === p.id);
+    return !saleItems.some(item => item.productId === p.id) &&
+      (stockItem?.quantity || 0) > 0 &&
+      (p.name.toLowerCase().includes(saleProductSearch.toLowerCase()) ||
+        p.model.toLowerCase().includes(saleProductSearch.toLowerCase()));
+  });
 
   return (
     <AppLayout>
       <div className="space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Inventory</h1>
-            <p className="text-muted-foreground">Manage warehouse stock and products</p>
+            <div className="flex items-center gap-4 mb-1">
+              <h1 className="text-3xl font-bold tracking-tight">Inventory</h1>
+              <div className="flex items-center bg-muted/50 p-1 rounded-lg border">
+                <button
+                  onClick={() => setActiveTab('inventory')}
+                  className={`px-3 py-1 text-sm font-medium rounded-md transition-all ${activeTab === 'inventory'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                >
+                  Current Stock
+                </button>
+                <button
+                  onClick={() => setActiveTab('sales')}
+                  className={`px-3 py-1 text-sm font-medium rounded-md transition-all ${activeTab === 'sales'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                >
+                  History
+                </button>
+              </div>
+            </div>
+            <p className="text-muted-foreground">
+              {activeTab === 'inventory' ? 'Manage warehouse stock and products' : 'View history of sales and stock movements'}
+            </p>
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
             <Button variant="outline" onClick={handleExportAll} disabled={filteredStock.length === 0}>
               <Download className="h-4 w-4 mr-2" />
               Export
@@ -567,61 +818,209 @@ export default function Inventory() {
                 </DialogContent>
               </Dialog>
             )}
+            {canManageStock && (
+              <Dialog open={isRecordSaleOpen} onOpenChange={setIsRecordSaleOpen}>
+                <DialogTrigger asChild>
+                  <Button className="rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:scale-[1.02] hover:shadow-[0_8px_32px_rgba(16,185,129,0.35)] text-white shadow-lg border-0 transition-all duration-300 font-bold tracking-wide">
+                    <ShoppingCart className="h-4 w-4 mr-2" />
+                    Record Sale
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Record Warehouse Sale</DialogTitle>
+                  </DialogHeader>
+                  <form onSubmit={handleRecordSale} className="space-y-4 pt-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="customer_name">Customer Name</Label>
+                        <Input
+                          id="customer_name"
+                          placeholder="Enter customer name"
+                          value={saleForm.customer_name}
+                          onChange={(e) => setSaleForm({ ...saleForm, customer_name: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="payment_method">Payment Method</Label>
+                        <Select
+                          value={saleForm.payment_method}
+                          onValueChange={(value) => setSaleForm({ ...saleForm, payment_method: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select payment method" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="CASH">Cash</SelectItem>
+                            <SelectItem value="CARD">Card</SelectItem>
+                            <SelectItem value="UPI">UPI</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 border-t pt-4">
+                      <Label>Add Products to Sale</Label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            placeholder="Search products to sell..."
+                            value={saleProductSearch}
+                            onChange={(e) => setSaleProductSearch(e.target.value)}
+                            className="pl-8"
+                          />
+                          {saleProductSearch && filteredSaleProducts.length > 0 && (
+                            <div className="absolute z-10 w-full mt-1 bg-background border rounded-md shadow-lg max-h-48 overflow-y-auto">
+                              {filteredSaleProducts.map(product => (
+                                <button
+                                  key={product.id}
+                                  type="button"
+                                  className="w-full text-left px-3 py-2 hover:bg-accent flex justify-between items-center"
+                                  onClick={() => addProductToSale(product.id)}
+                                >
+                                  <div>
+                                    <p className="font-medium text-sm">{product.name}</p>
+                                    <p className="text-xs text-muted-foreground">{product.model}</p>
+                                  </div>
+                                  <Badge variant="outline">
+                                    {stock.find(s => s.product_id === product.id)?.quantity || 0} in stock
+                                  </Badge>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Sale Items</Label>
+                      {saleItems.length === 0 ? (
+                        <p className="text-sm text-muted-foreground py-4 text-center border rounded-md border-dashed">
+                          No items added to sale yet
+                        </p>
+                      ) : (
+                        <div className="border rounded-md divide-y">
+                          {saleItems.map((item, index) => {
+                            const product = products.find(p => p.id === item.productId);
+                            const stockItem = stock.find(s => s.product_id === item.productId);
+                            const max = stockItem?.quantity || 0;
+
+                            return (
+                              <div key={item.productId} className="p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                                <div className="flex-1 w-full sm:w-auto overflow-hidden">
+                                  <p className="font-medium text-sm truncate">{product?.name}</p>
+                                  <p className="text-xs text-muted-foreground truncate">{product?.model}</p>
+                                </div>
+                                <div className="flex flex-wrap sm:flex-nowrap items-center gap-4 w-full sm:w-auto">
+                                  <div className="flex flex-col items-start sm:items-end gap-1 flex-1 sm:flex-none">
+                                    <Label className="text-[10px] uppercase text-muted-foreground">Price</Label>
+                                    <Input
+                                      type="number"
+                                      className="w-24 h-8 text-right"
+                                      value={item.price}
+                                      onChange={(e) => setSalePrice(item.productId, parseFloat(e.target.value))}
+                                    />
+                                  </div>
+                                  <div className="flex flex-col items-end gap-1">
+                                    <Label className="text-[10px] uppercase text-muted-foreground">Qty (Max: {max})</Label>
+                                    <div className="flex items-center gap-2">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="icon"
+                                        className="h-7 w-7"
+                                        onClick={() => setSaleQuantity(item.productId, item.quantity - 1)}
+                                      >
+                                        <Minus className="h-3 w-3" />
+                                      </Button>
+                                      <Input
+                                        type="number"
+                                        className="h-7 w-12 text-center p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                        value={item.quantity === 0 ? '' : item.quantity}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setSaleQuantity(item.productId, val === '' ? 0 : parseInt(val));
+                                        }}
+                                      />
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="icon"
+                                        className="h-7 w-7"
+                                        onClick={() => setSaleQuantity(item.productId, item.quantity + 1)}
+                                        disabled={item.quantity >= max}
+                                      >
+                                        <Plus className="h-3 w-3" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-destructive"
+                                    onClick={() => removeProductFromSale(item.productId)}
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          <div className="p-3 bg-muted/30 flex justify-between items-center font-bold">
+                            <span>Total Amount</span>
+                            <span className="text-chart-3">
+                              ₹{saleItems.reduce((sum, item) => sum + (item.price * item.quantity), 0).toLocaleString('en-IN')}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <Button type="submit" className="w-full" disabled={saleItems.length === 0}>
+                      Confirm and Record Sale
+                    </Button>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            )}
             {canManageStock && transactionOptions.types.length > 0 && (
+
               <Dialog open={isStockTransferOpen} onOpenChange={(open) => {
                 setIsStockTransferOpen(open);
                 if (!open) setTransferProductSearch('');
               }}>
                 <DialogTrigger asChild>
-                  <Button>
-                    <Package className="h-4 w-4 mr-2" />
+                  <Button className="rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 hover:scale-[1.02] hover:shadow-[0_8px_32px_rgba(59,130,246,0.35)] text-white shadow-lg border-0 transition-all duration-300 font-bold tracking-wide">
+                    <Package className="h-4 w-4 mr-2 text-blue-200" />
                     Stock Transfer
                   </Button>
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>
-                      Stock Transfer
-                      {isWarehouseStaff && !isAdmin && (
-                        <span className="text-sm font-normal text-muted-foreground block">
-                          Warehouse → Shop (Stock Out only)
-                        </span>
-                      )}
-                      {isProcurementStaff && !isAdmin && (
-                        <span className="text-sm font-normal text-muted-foreground block">
-                          Supplier/OEM → Warehouse (Stock In only)
-                        </span>
-                      )}
+                      Inventory Stock In
+                      <span className="text-sm font-normal text-muted-foreground block">
+                        Add stock to Warehouse inventory
+                      </span>
                     </DialogTitle>
                   </DialogHeader>
-                  <form onSubmit={handleStockTransfer} className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Transaction Type</Label>
-                        <Select 
-                          value={transferForm.transaction_type} 
-                          onValueChange={(value) => {
-                            const newSource = value === 'IN' ? 'WAREHOUSE' : value === 'OUT' ? 'SHOP' : transferForm.source;
-                            setTransferForm({ ...transferForm, transaction_type: value as TransactionType, source: newSource as StockSource | '' });
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select type" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {transactionOptions.types.map(opt => (
-                              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                  <form onSubmit={handleStockTransfer} className="space-y-4 pt-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-muted/30 p-3 rounded-lg border">
+                      <div className="space-y-1">
+                        <Label className="text-[10px] uppercase text-muted-foreground">Type</Label>
+                        <p className="font-medium text-sm">STOCK IN</p>
                       </div>
-                      <div className="space-y-2">
-                        <Label>Destination/Source</Label>
-                        <Select 
-                          value={transferForm.source} 
+                      <div className="space-y-1">
+                        <Label className="text-[10px] uppercase text-muted-foreground">Destination</Label>
+                        <Select
+                          value={transferForm.source}
                           onValueChange={(value) => setTransferForm({ ...transferForm, source: value as StockSource })}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger className="h-8 text-xs border-none bg-transparent p-0 shadow-none">
                             <SelectValue placeholder="Select" />
                           </SelectTrigger>
                           <SelectContent>
@@ -669,37 +1068,41 @@ export default function Inventory() {
                         {transferItems.map((item) => {
                           const product = products.find(p => p.id === item.productId);
                           return (
-                            <div key={item.productId} className="flex items-center justify-between p-2 bg-muted/50 rounded-md">
-                              <div className="flex-1">
-                                <p className="font-medium text-sm">{product?.name}</p>
-                                <p className="text-xs text-muted-foreground">{product?.model}</p>
+                            <div key={item.productId} className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-2 bg-muted/50 rounded-md gap-3">
+                              <div className="flex-1 overflow-hidden">
+                                <p className="font-medium text-sm truncate">{product?.name}</p>
+                                <p className="text-xs text-muted-foreground truncate">{product?.model}</p>
                               </div>
-                              <div className="flex items-center gap-3">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={() => updateTransferQuantity(item.productId, -1)}
-                                >
-                                  <Minus className="h-4 w-4" />
-                                </Button>
-                                <Input
-                                  type="number"
-                                  min="1"
-                                  value={item.quantity}
-                                  onChange={(e) => setTransferQuantity(item.productId, parseInt(e.target.value) || 1)}
-                                  className="w-20 text-center h-8 mx-1"
-                                />
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={() => updateTransferQuantity(item.productId, 1)}
-                                >
-                                  <Plus className="h-4 w-4" />
-                                </Button>
+                              <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
+                                <div className="flex items-center">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateTransferQuantity(item.productId, -1)}
+                                  >
+                                    <Minus className="h-4 w-4" />
+                                  </Button>
+                                  <Input
+                                    type="number"
+                                    value={item.quantity === 0 ? '' : item.quantity}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setTransferQuantity(item.productId, val === '' ? 0 : parseInt(val));
+                                    }}
+                                    className="w-20 text-center h-8 mx-1 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateTransferQuantity(item.productId, 1)}
+                                  >
+                                    <Plus className="h-4 w-4" />
+                                  </Button>
+                                </div>
                                 <Button
                                   type="button"
                                   variant="ghost"
@@ -736,66 +1139,201 @@ export default function Inventory() {
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Search products..."
+              placeholder={activeTab === 'inventory' ? "Search products..." : "Search by customer or product..."}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-10"
             />
           </div>
-          <Select value={stockFilter} onValueChange={(v: any) => setStockFilter(v)}>
-            <SelectTrigger className="w-full sm:w-[180px]">
-              <SelectValue placeholder="Stock Level" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Levels</SelectItem>
-              <SelectItem value="low">Low Stock (&lt; 5)</SelectItem>
-              <SelectItem value="medium">Medium (5-19)</SelectItem>
-              <SelectItem value="high">High Stock (20+)</SelectItem>
-            </SelectContent>
-          </Select>
+          {activeTab === 'inventory' && (
+            <Select value={stockFilter} onValueChange={(v: any) => setStockFilter(v)}>
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <SelectValue placeholder="Stock Level" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Levels</SelectItem>
+                <SelectItem value="low">Low Stock (&lt; 5)</SelectItem>
+                <SelectItem value="medium">Medium (5-19)</SelectItem>
+                <SelectItem value="high">High Stock (20+)</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
         </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="animate-pulse text-muted-foreground">Loading inventory...</div>
-          </div>
+        {activeTab === 'inventory' ? (
+          loading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-pulse text-muted-foreground">Loading inventory...</div>
+            </div>
+          ) : (
+            <Tabs defaultValue="all">
+              <TabsList className="flex flex-wrap h-auto gap-1 bg-transparent p-0">
+                <TabsTrigger value="all" className="rounded-full border data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  All ({filteredStock.length})
+                </TabsTrigger>
+                {['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF'].map(cat => {
+                  const count = filterByCategory(cat).length;
+                  return (
+                    <TabsTrigger key={cat} value={cat} className="rounded-full border data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      {cat}s ({count})
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
+
+              <div className="mt-6 glass-card rounded-2xl overflow-hidden border shadow-sm">
+                <TabsContent value="all" className="m-0">
+                  <div className="p-4 bg-muted/30 border-b">
+                    <h2 className="font-semibold flex items-center gap-2">
+                      <Package className="h-4 w-4 text-primary" />
+                      All Stock
+                    </h2>
+                  </div>
+                  {renderStockTable(filteredStock)}
+                </TabsContent>
+
+                {['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF'].map(cat => (
+                  <TabsContent key={cat} value={cat} className="m-0">
+                    <div className="p-4 bg-muted/30 border-b">
+                      <h2 className="font-semibold flex items-center gap-2">
+                        <Package className="h-4 w-4 text-primary" />
+                        {cat} Stock
+                      </h2>
+                    </div>
+                    {renderStockTable(filterByCategory(cat))}
+                  </TabsContent>
+                ))}
+              </div>
+            </Tabs>
+          )
         ) : (
-          <Tabs defaultValue="all">
-            <TabsList>
-              <TabsTrigger value="all">All ({filteredStock.length})</TabsTrigger>
-              <TabsTrigger value="Battery">Batteries ({filterByCategory('Battery').length})</TabsTrigger>
-              <TabsTrigger value="Inverter">Inverters ({filterByCategory('Inverter').length})</TabsTrigger>
-              <TabsTrigger value="UPS">UPS ({filterByCategory('UPS').length})</TabsTrigger>
-              <TabsTrigger value="Trolly">Trollys ({filterByCategory('Trolly').length})</TabsTrigger>
-              <TabsTrigger value="Solar Panel">Solar Panels ({filterByCategory('Solar Panel').length})</TabsTrigger>
-              <TabsTrigger value="Charger">Chargers ({filterByCategory('Charger').length})</TabsTrigger>
-              <TabsTrigger value="SMF">SMF ({filterByCategory('SMF').length})</TabsTrigger>
-            </TabsList>
-            <TabsContent value="all">
-              <Card><CardHeader><CardTitle>All Stock</CardTitle></CardHeader><CardContent>{renderStockTable(filteredStock)}</CardContent></Card>
-            </TabsContent>
-            <TabsContent value="Battery">
-              <Card><CardHeader><CardTitle>Batteries</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('Battery'))}</CardContent></Card>
-            </TabsContent>
-            <TabsContent value="Inverter">
-              <Card><CardHeader><CardTitle>Inverters</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('Inverter'))}</CardContent></Card>
-            </TabsContent>
-            <TabsContent value="UPS">
-              <Card><CardHeader><CardTitle>UPS</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('UPS'))}</CardContent></Card>
-            </TabsContent>
-            <TabsContent value="Trolly">
-              <Card><CardHeader><CardTitle>Trollys</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('Trolly'))}</CardContent></Card>
-            </TabsContent>
-            <TabsContent value="Solar Panel">
-              <Card><CardHeader><CardTitle>Solar Panels</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('Solar Panel'))}</CardContent></Card>
-            </TabsContent>
-            <TabsContent value="Charger">
-              <Card><CardHeader><CardTitle>Chargers</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('Charger'))}</CardContent></Card>
-            </TabsContent>
-            <TabsContent value="SMF">
-              <Card><CardHeader><CardTitle>SMF</CardTitle></CardHeader><CardContent>{renderStockTable(filterByCategory('SMF'))}</CardContent></Card>
-            </TabsContent>
-          </Tabs>
+          <div className="space-y-4">
+            <Card className="rounded-2xl overflow-hidden border shadow-sm">
+              <CardHeader className="bg-muted/30 border-b">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Package className="h-5 w-5 text-primary" />
+                  Inventory Activity History
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {salesLoading || transactionsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="animate-pulse text-muted-foreground">Loading history...</div>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Activity Type</TableHead>
+                        <TableHead>Details</TableHead>
+                        <TableHead className="text-right">Quantity</TableHead>
+                        <TableHead>Handled By</TableHead>
+                        <TableHead>Info / Remarks</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(() => {
+                        const sLower = search.toLowerCase();
+
+                        // Transform sales to activity records
+                        const salesActivity = sales.map(s => ({
+                          id: `sale-${s.id}`,
+                          date: s.created_at,
+                          type: 'SALE',
+                          details: s.customer_name || 'Walking Customer',
+                          items: s.items || [],
+                          quantity: s.items?.reduce((acc: number, cur: any) => acc + (cur.quantity || 0), 0) || 0,
+                          handler: s.sold_by,
+                          info: `${s.payment_method} - ₹${s.total_amount?.toLocaleString()}`,
+                        }));
+
+                        // Transform transactions to activity records (ONLY 'IN' transactions as per user request)
+                        const transActivity = stockTransactions
+                          .filter(t => t.transaction_type === 'IN')
+                          .map(t => ({
+                            id: `trans-${t.id}`,
+                            date: t.created_at,
+                            type: 'STOCK IN',
+                            details: `Stock Added: ${t.product?.name}`,
+                            items: [],
+                            quantity: t.quantity,
+                            handler: t.handled_by,
+                            info: `${t.product?.model} - ${t.remarks || 'Stock Transfer'}`,
+                          }));
+
+                        const unified = [...salesActivity, ...transActivity].sort((a, b) =>
+                          new Date(b.date).getTime() - new Date(a.date).getTime()
+                        ).filter(a => {
+                          const matchesSearch =
+                            a.details?.toLowerCase().includes(sLower) ||
+                            a.info?.toLowerCase().includes(sLower) ||
+                            a.items?.some((i: any) => {
+                              const pName = i.product?.name?.toLowerCase() || '';
+                              const pModel = i.model_number?.toLowerCase() || '';
+                              return pName.includes(sLower) || pModel.includes(sLower);
+                            });
+                          return matchesSearch;
+                        });
+
+                        if (unified.length === 0) {
+                          return (
+                            <TableRow>
+                              <TableCell colSpan={6} className="text-center text-muted-foreground py-12">
+                                No activity records found
+                              </TableCell>
+                            </TableRow>
+                          );
+                        }
+
+                        return unified.map((act) => (
+                          <TableRow key={act.id}>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {new Date(act.date).toLocaleString('en-IN', {
+                                day: '2-digit',
+                                month: 'short',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </TableCell>
+                            <TableCell>
+                              {act.type === 'SALE' ? (
+                                <Badge variant="default" className="bg-emerald-600">SALE</Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-blue-500 border-blue-500/20 bg-blue-500/10">STOCK IN</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="font-medium">{act.details}</div>
+                              {act.items.length > 0 && (
+                                <div className="text-[10px] text-muted-foreground mt-1">
+                                  {act.items.map((i: any, idx: number) => (
+                                    <span key={idx}>
+                                      {i.quantity}x {i.product?.name || i.model_number}
+                                      {idx < act.items.length - 1 ? ', ' : ''}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right font-medium">
+                              {act.type === 'SALE' ? '-' : '+'}{act.quantity}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {getProfileName(act.handler)}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">
+                              {act.info}
+                            </TableCell>
+                          </TableRow>
+                        ));
+                      })()}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {/* Delete Confirmation Dialog */}
@@ -804,7 +1342,7 @@ export default function Inventory() {
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Product?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will permanently delete "{productToDelete?.name} - {productToDelete?.model}" and its stock record. 
+                This will permanently delete "{productToDelete?.name} - {productToDelete?.model}" and its stock record.
                 This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>

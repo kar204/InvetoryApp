@@ -1,6 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, Shield, UserCog } from 'lucide-react';
+import { Plus, Search, Shield, UserCog, Trash2 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -23,7 +33,6 @@ const allRoles: { value: AppRole; label: string; description: string }[] = [
   { value: 'service_agent', label: 'Service Agent (Legacy)', description: 'Work on assigned tickets' },
   { value: 'warehouse_staff', label: 'Warehouse Staff', description: 'Manage inventory stock' },
   { value: 'procurement_staff', label: 'Procurement Staff', description: 'Add products and manage procurement' },
-  { value: 'seller', label: 'Seller', description: 'View shop and record sales' },
   { value: 'scrap_manager', label: 'Scrap Manager', description: 'View and manage scrap entries' },
 ];
 
@@ -35,7 +44,6 @@ const roleColors: Record<AppRole, string> = {
   service_agent: 'bg-chart-2/20 text-chart-2 border-chart-2/30',
   warehouse_staff: 'bg-chart-1/20 text-chart-1 border-chart-1/30',
   procurement_staff: 'bg-chart-4/20 text-chart-4 border-chart-4/30',
-  seller: 'bg-chart-5/20 text-chart-5 border-chart-5/30',
   scrap_manager: 'bg-chart-3/20 text-chart-3 border-chart-3/30',
 };
 
@@ -48,7 +56,9 @@ export default function Users() {
   const [search, setSearch] = useState('');
   const [selectedUser, setSelectedUser] = useState<Profile | null>(null);
   const [selectedRoles, setSelectedRoles] = useState<AppRole[]>([]);
-  
+  const [userToDelete, setUserToDelete] = useState<Profile | null>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
+
   // Add user form state
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
   const [newUserEmail, setNewUserEmail] = useState('');
@@ -56,11 +66,31 @@ export default function Users() {
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRoles, setNewUserRoles] = useState<AppRole[]>([]);
   const [addingUser, setAddingUser] = useState(false);
-  
+
   const isAdmin = hasRole('admin');
 
   useEffect(() => {
     fetchData();
+
+    // Set up real-time subscription for profiles and roles
+    const profilesChannel = supabase
+      .channel('public:profiles')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
+        fetchData();
+      })
+      .subscribe();
+
+    const rolesChannel = supabase
+      .channel('public:user_roles')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_roles' }, () => {
+        fetchData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(profilesChannel);
+      supabase.removeChannel(rolesChannel);
+    };
   }, []);
 
   const fetchData = async () => {
@@ -119,17 +149,61 @@ export default function Users() {
     }
   };
 
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    setIsDeletingUser(true);
+
+    try {
+      // Delete user roles
+      const { error: rolesError } = await supabase
+        .from('user_roles')
+        .delete()
+        .eq('user_id', userToDelete.user_id);
+
+      if (rolesError) throw rolesError;
+
+      // Delete profile
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('user_id', userToDelete.user_id);
+
+      if (profileError) {
+        // If there's a foreign key error, it's because they have activity history
+        if (profileError.code === '23503') {
+          throw new Error('Cannot delete user because they have recorded activity (tickets, sales, or logs). You should remove their roles instead to revoke access.');
+        }
+        throw profileError;
+      }
+
+      toast({
+        title: 'User deleted successfully',
+        description: 'The user profile and roles have been removed.'
+      });
+
+      // Force immediate local state update in case real-time is slow
+      setProfiles(prev => prev.filter(p => p.user_id !== userToDelete.user_id));
+      setUserToDelete(null);
+      fetchData();
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      toast({ title: 'Error deleting user', description: errorMessage, variant: 'destructive' });
+    } finally {
+      setIsDeletingUser(false);
+    }
+  };
+
   const toggleRole = (role: AppRole) => {
-    setSelectedRoles(prev => 
-      prev.includes(role) 
+    setSelectedRoles(prev =>
+      prev.includes(role)
         ? prev.filter(r => r !== role)
         : [...prev, role]
     );
   };
 
   const toggleNewUserRole = (role: AppRole) => {
-    setNewUserRoles(prev => 
-      prev.includes(role) 
+    setNewUserRoles(prev =>
+      prev.includes(role)
         ? prev.filter(r => r !== role)
         : [...prev, role]
     );
@@ -184,10 +258,10 @@ export default function Users() {
       fetchData();
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-      toast({ 
-        title: 'Error creating user', 
-        description: errorMessage, 
-        variant: 'destructive' 
+      toast({
+        title: 'Error creating user',
+        description: errorMessage,
+        variant: 'destructive'
       });
     } finally {
       setAddingUser(false);
@@ -257,7 +331,7 @@ export default function Users() {
                     <Label>Assign Roles (Optional)</Label>
                     <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-2">
                       {allRoles.map(role => (
-                        <div 
+                        <div
                           key={role.value}
                           className="flex items-center gap-2 p-2 rounded hover:bg-muted/50"
                         >
@@ -297,84 +371,84 @@ export default function Users() {
             <div className="animate-pulse text-muted-foreground">Loading users...</div>
           </div>
         ) : (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5" />
-                All Users
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Roles</TableHead>
-                    <TableHead>Joined</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredProfiles.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                        No users found
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredProfiles.map((profile) => {
-                      const roles = getUserRoles(profile.user_id);
-                      return (
-                        <TableRow key={profile.id}>
-                          <TableCell>
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted">
-                                <span className="text-sm font-medium">
-                                  {profile.name.charAt(0).toUpperCase()}
-                                </span>
-                              </div>
-                              <span className="font-medium">{profile.name}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">{profile.email}</TableCell>
-                          <TableCell>
-                            <div className="flex flex-wrap gap-1">
-                              {roles.length === 0 ? (
-                                <Badge variant="outline" className="text-muted-foreground">
-                                  No roles assigned
-                                </Badge>
-                              ) : (
-                                roles.map(role => (
-                                  <Badge key={role} variant="outline" className={roleColors[role]}>
-                                    {role.replace('_', ' ')}
-                                  </Badge>
-                                ))
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {format(new Date(profile.created_at), 'MMM dd, yyyy')}
-                          </TableCell>
-                          <TableCell className="text-right">
+          <div className="bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in duration-500">
+            <div className="px-6 py-5 border-b border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-[#0B0F19]/80 shrink-0">
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2 tracking-wide"><Shield className="w-5 h-5 text-[#4F8CFF]" /> User Permissions</h2>
+            </div>
+            <div className="divide-y divide-white/5">
+              {filteredProfiles.length === 0 ? (
+                <div className="p-12 text-center text-slate-600 dark:text-slate-500 font-medium flex flex-col items-center justify-center gap-3">
+                  <Shield className="h-10 w-10 text-slate-700" />
+                  No users found
+                </div>
+              ) : (
+                filteredProfiles.map((profile) => {
+                  const roles = getUserRoles(profile.user_id);
+                  return (
+                    <div key={profile.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-6 hover:bg-slate-100 dark:bg-[#1B2438] transition-colors duration-200 group gap-4 relative">
+                      {/* Active row indicator */}
+                      <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#4F8CFF] scale-y-0 group-hover:scale-y-100 transition-transform origin-center" />
+
+                      <div className="flex items-center gap-5 pl-2">
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#4F8CFF] to-blue-600 flex items-center justify-center text-slate-900 dark:text-white font-bold text-lg shadow-[0_0_15px_rgba(79,140,255,0.3)] group-hover:scale-105 transition-transform shrink-0 ring-2 ring-[#0B0F19]">
+                          {profile.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="font-bold text-slate-800 dark:text-slate-200 text-lg tracking-wide group-hover:text-slate-900 dark:hover:text-white transition-colors">{profile.name}</div>
+                          <div className="text-sm text-slate-600 dark:text-slate-500 dark:text-slate-400">{profile.email}</div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6 sm:w-[55%] justify-between">
+                        <div className="flex flex-wrap gap-2">
+                          {roles.length === 0 ? (
+                            <span className="text-sm text-slate-600 dark:text-slate-500 italic">No roles assigned</span>
+                          ) : (
+                            roles.map(role => {
+                              const isPrimary = role === 'admin' || role === 'procurement_staff';
+                              const isSecondary = role.includes('manager') || role.includes('counter');
+
+                              const dotColor = isPrimary ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : isSecondary ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'bg-[#4F8CFF] shadow-[0_0_8px_rgba(79,140,255,0.8)]';
+                              const pillBg = isPrimary ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : isSecondary ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : 'bg-[#4F8CFF]/10 border-[#4F8CFF]/20 text-[#4F8CFF]';
+
+                              return (
+                                <div key={role} className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${pillBg} font-bold text-[10px] tracking-widest uppercase shadow-sm`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full ${dotColor} animate-pulse`} />
+                                  {role.replace('_', ' ')}
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-9 font-semibold text-slate-600 dark:text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-white/10 rounded-xl transition-all"
+                            onClick={() => openEditRoles(profile)}
+                            disabled={profile.user_id === user?.id}
+                          >
+                            <UserCog className="h-4 w-4 mr-2" /> Edit
+                          </Button>
+                          {isAdmin && profile.user_id !== user?.id && (
                             <Button
                               variant="ghost"
-                              size="sm"
-                              onClick={() => openEditRoles(profile)}
-                              disabled={profile.user_id === user?.id}
+                              size="icon"
+                              className="h-9 w-9 rounded-xl text-slate-600 dark:text-slate-500 hover:text-red-400 hover:bg-red-400/10 transition-all"
+                              onClick={() => setUserToDelete(profile)}
                             >
-                              <UserCog className="h-4 w-4 mr-1" />
-                              Edit Roles
+                              <Trash2 className="h-4 w-4" />
                             </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         )}
 
         {/* Edit Roles Dialog */}
@@ -399,7 +473,7 @@ export default function Users() {
 
                 <div className="space-y-3">
                   {allRoles.map(role => (
-                    <div 
+                    <div
                       key={role.value}
                       className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors"
                     >
@@ -425,6 +499,30 @@ export default function Users() {
             )}
           </DialogContent>
         </Dialog>
+
+        {/* Delete Confirmation */}
+        <AlertDialog open={!!userToDelete} onOpenChange={() => setUserToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will delete <strong>{userToDelete?.name}</strong>'s profile and roles.
+                They will no longer have access to the application, but their login account
+                will remain in Supabase until manually deleted.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteUser}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={isDeletingUser}
+              >
+                {isDeletingUser ? 'Deleting...' : 'Delete User'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppLayout>
   );

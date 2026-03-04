@@ -1,11 +1,10 @@
-import { 
-  LayoutDashboard, 
-  Wrench, 
-  Package, 
-  ClipboardList, 
+import {
+  LayoutDashboard,
+  Wrench,
+  Package,
+  ClipboardList,
   Users,
   LogOut,
-  Store,
   Recycle
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -28,7 +27,6 @@ const menuItems = [
   { title: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', roles: ['admin', 'counter_staff', 'service_agent', 'warehouse_staff', 'procurement_staff'] },
   { title: 'Service Tickets', icon: Wrench, path: '/services', roles: ['admin', 'counter_staff', 'service_agent', 'sp_battery', 'sp_invertor'] },
   { title: 'Inventory', icon: Package, path: '/inventory', roles: ['admin', 'warehouse_staff', 'procurement_staff'] },
-  { title: 'Shop', icon: Store, path: '/shop', roles: ['admin', 'counter_staff', 'warehouse_staff', 'seller'] },
   { title: 'Scrap', icon: Recycle, path: '/scrap', roles: ['admin', 'counter_staff', 'scrap_manager'] },
   { title: 'Transactions', icon: ClipboardList, path: '/transactions', roles: ['admin', 'warehouse_staff', 'procurement_staff'] },
   { title: 'Users', icon: Users, path: '/users', roles: ['admin'] },
@@ -39,7 +37,7 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const { profile, roles, signOut, hasAnyRole } = useAuth();
 
-  const filteredMenuItems = menuItems.filter(item => 
+  const filteredMenuItems = menuItems.filter(item =>
     hasAnyRole(item.roles as any[])
   );
 
@@ -49,36 +47,42 @@ export function AppSidebar() {
   };
 
   return (
-    <Sidebar className="glass-sidebar border-r-0">
-      <SidebarHeader className="p-4 border-b border-border/30">
+    <Sidebar className="border-r border-slate-200 dark:border-transparent bg-slate-50 dark:bg-[#0B0F19] transition-all duration-300 ease-in-out group/sidebar shadow-xl dark:shadow-none">
+      <SidebarHeader className="p-4 border-b border-slate-200 dark:border-white/[0.04] bg-transparent">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 shadow-sm overflow-hidden">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#4F8CFF]/20 to-[#4F8CFF]/5 shadow-[0_0_15px_rgba(79,140,255,0.15)] overflow-hidden border border-[#4F8CFF]/20">
             <img
               src="/afsal-logo.png"
               alt="Afsal Traders logo"
-              className="h-11 w-11 object-contain"
+              className="h-8 w-8 object-contain drop-shadow"
             />
           </div>
-          <div className="flex flex-col">
-            <span className="font-semibold text-foreground">BatteryPro</span>
-            <span className="text-xs text-muted-foreground">Management System</span>
+          <div className="flex flex-col overflow-hidden transition-opacity duration-300">
+            <span className="font-semibold text-slate-900 dark:text-white tracking-wide text-sm leading-tight">BatteryPro</span>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]"></span>
+              <span className="text-[10px] text-slate-600 dark:text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">Workspace</span>
+            </div>
           </div>
         </div>
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent className="bg-transparent pt-4">
         <SidebarGroup>
-          <SidebarGroupLabel className="text-muted-foreground/70 text-xs uppercase tracking-wider">Navigation</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-slate-600 dark:text-slate-500/70 text-[10px] font-bold uppercase tracking-[0.15em] mb-2 px-4 transition-all group-data-[state=collapsed]/sidebar:opacity-0 group-data-[state=collapsed]/sidebar:-translate-x-2">Navigation</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
+            <SidebarMenu className="px-2 space-y-1">
               {filteredMenuItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton 
+                  <SidebarMenuButton
                     isActive={location.pathname === item.path}
                     onClick={() => navigate(item.path)}
-                    className="cursor-pointer rounded-xl transition-all duration-200 data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                    className="cursor-pointer group relative flex items-center rounded-lg transition-all duration-200 overflow-hidden text-slate-600 dark:text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:bg-[#1B2438] data-[active=true]:bg-gradient-to-r data-[active=true]:from-[#4F8CFF]/15 data-[active=true]:to-transparent data-[active=true]:text-[#4F8CFF]"
                   >
-                    <item.icon className="h-4 w-4" />
-                    <span>{item.title}</span>
+                    {location.pathname === item.path && (
+                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-[#4F8CFF] rounded-r-full shadow-[0_0_10px_rgba(79,140,255,0.6)]" />
+                    )}
+                    <item.icon className={`h-4 w-4 shrink-0 transition-all duration-200 ${location.pathname === item.path ? 'drop-shadow-[0_0_8px_rgba(79,140,255,0.5)]' : 'group-hover:scale-110'}`} />
+                    <span className="font-medium tracking-wide text-sm ml-3">{item.title}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
@@ -86,34 +90,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-4 border-t border-border/30">
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10">
-              <span className="text-sm font-medium text-primary">
-                {profile?.name?.charAt(0).toUpperCase() || 'U'}
-              </span>
-            </div>
-            <div className="flex flex-col overflow-hidden">
-              <span className="text-sm font-medium text-foreground truncate">
-                {profile?.name || 'User'}
-              </span>
-              <span className="text-xs text-muted-foreground truncate">
-                {roles.length > 0 ? roles[0].replace('_', ' ') : 'No role'}
-              </span>
-            </div>
-          </div>
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={handleSignOut}
-            className="w-full justify-start text-muted-foreground hover:text-foreground rounded-xl"
-          >
-            <LogOut className="h-4 w-4 mr-2" />
-            Sign Out
-          </Button>
-        </div>
-      </SidebarFooter>
+
     </Sidebar>
   );
 }

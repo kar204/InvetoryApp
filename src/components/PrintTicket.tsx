@@ -14,22 +14,6 @@ export function PrintTicket({ ticket, profileName, invertorProfileName }: PrintT
     const hasInvertorResolution = ticket.invertor_model && ticket.invertor_resolved;
     const totalPrice = (ticket.battery_price || 0) + (ticket.invertor_price || 0);
 
-    // Load the logo and convert to base64 to ensure it prints properly
-    let logoDataUrl = '';
-    try {
-      const response = await fetch('/afsal-logo.png');
-      const blob = await response.blob();
-      logoDataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
-    } catch (error) {
-      console.error('Failed to load logo:', error);
-      // Fallback: try to use the image directly if fetching fails (though this might not work in all print contexts due to CORS/loading)
-      // But for local same-origin, it might help if fetch fails for some reason.
-    }
-
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
@@ -38,228 +22,239 @@ export function PrintTicket({ ticket, profileName, invertorProfileName }: PrintT
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Service Ticket - ${ticket.ticket_number}</title>
+          <title>&nbsp;</title>
           <style>
+            @page {
+              size: 58mm auto;
+              margin: 0 !important;
+            }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              width: 58mm;
+              background: white;
+              display: block !important;
+              height: auto !important;
+              min-height: 0 !important;
+            }
             body {
-              font-family: Arial, sans-serif;
-              padding: 20px;
-              max-width: 800px;
-              margin: 0 auto;
+              font-family: 'Calibri', 'Segoe UI', 'Arial', sans-serif;
+              color: black;
+              position: absolute;
+              top: 0;
+              left: 0;
+              padding: 2mm;
+              box-sizing: border-box;
+              font-size: 13px;
+              line-height: 1.4; /* Slightly reduced line spacing from 1.8 */
             }
-            .header {
-              display: flex;
-              align-items: center;
-              justify-content: space-between;
-              border-bottom: 2px solid #333;
-              padding-bottom: 15px;
-              margin-bottom: 20px;
+            .receipt-header {
+              text-align: center;
+              border-bottom: 2px solid #000;
+              padding-bottom: 6px;
+              margin-bottom: 10px;
             }
-            .header-logo {
-              display: flex;
-              align-items: center;
-              justify-content: flex-start;
-            }
-            .header-logo img {
-              height: 80px;
-              width: 80px;
-              object-fit: contain;
-            }
-            .header-text {
-              text-align: right;
-            }
-            .header-text h1 {
+            .receipt-header h1 {
               margin: 0;
-              font-size: 24px;
+              font-size: 18px;
+              text-transform: uppercase;
+              font-weight: bold;
+            }
+            .shop-contact {
+              font-size: 14px;
+              margin-top: 4px;
+              font-weight: bold;
+            }
+            .ticket-number-box {
+              margin-top: 6px;
+              padding: 4px;
+              border: 1px solid #000;
+              display: inline-block;
+              width: 90%;
             }
             .ticket-number {
-              font-size: 18px;
-              font-weight: bold;
-              color: #666;
-              margin-top: 10px;
+              font-size: 28px; /* Maxed size for AFT number */
+              font-weight: 900;
+              letter-spacing: 1px;
             }
             .section {
-              margin-bottom: 15px;
+              margin-bottom: 8px; /* Slightly reduced spacing from 12px */
+              display: flex;
+              justify-content: space-between;
+              padding-bottom: 3px;
+              border-bottom: 0.5px solid #000;
+            }
+            .description-box {
+              margin-bottom: 12px;
+              padding: 5px;
+              border: 0.5px dashed #000;
+              min-height: 35px;
+              line-height: 1.3;
             }
             .label {
               font-weight: bold;
-              color: #555;
-              font-size: 12px;
-              text-transform: uppercase;
+              color: #000;
+              font-size: 13px;
             }
             .value {
-              font-size: 14px;
-              margin-top: 3px;
-            }
-            .grid {
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 15px;
+              font-size: 13px;
+              text-align: right;
+              font-weight: bold;
+              flex: 1;
+              padding-left: 8px;
             }
             .resolution-section {
-              margin-top: 20px;
-              padding: 15px;
-              border: 1px solid #ddd;
-              border-radius: 8px;
-              background: #f9f9f9;
+              margin-top: 10px;
+              padding: 6px;
+              border: 1px solid #000;
             }
             .resolution-section h2 {
-              font-size: 16px;
-              margin: 0 0 15px 0;
-              color: #333;
-              border-bottom: 1px solid #ddd;
-              padding-bottom: 8px;
-            }
-            .price-highlight {
-              font-size: 18px;
+              font-size: 14px;
+              margin: 0 0 6px 0;
+              text-align: center;
               font-weight: bold;
-              color: #2e7d32;
+              text-decoration: underline;
             }
             .total-section {
-              margin-top: 20px;
-              padding: 15px;
-              background: #e8f5e9;
-              border-radius: 8px;
+              margin-top: 10px;
+              padding: 8px;
+              border-top: 2px solid #000;
+              border-bottom: 2px solid #000;
               text-align: center;
             }
-            .total-section .total-label {
+            .total-label {
               font-size: 14px;
-              color: #555;
-              margin-bottom: 5px;
-            }
-            .total-section .total-value {
-              font-size: 24px;
               font-weight: bold;
-              color: #2e7d32;
             }
-            .payment-badge {
-              display: inline-block;
-              padding: 4px 12px;
-              background: #e3f2fd;
-              border-radius: 4px;
+            .total-value {
+              font-size: 28px;
               font-weight: bold;
-              color: #1565c0;
+            }
+            .payment-info {
+              font-size: 16px;
+              font-weight: bold;
+              margin-top: 4px;
+            }
+            .terms-section {
+              margin-top: 12px;
+              font-size: 11px;
+              text-align: left;
+              line-height: 1.3;
+              border-top: 1px solid #000;
+              padding-top: 8px;
             }
             .footer {
-              margin-top: 30px;
-              border-top: 1px solid #ddd;
-              padding-top: 15px;
-              font-size: 12px;
-              color: #888;
+              margin-top: 12px;
+              text-align: center;
+              font-size: 11px;
+              border-top: 1px dashed #000;
+              padding-top: 8px;
+              padding-bottom: 8mm;
             }
-            .status-badge {
-              display: inline-block;
-              padding: 4px 8px;
-              border-radius: 4px;
-              font-size: 12px;
+            .signature-space {
+              margin-top: 30px;
+              display: flex;
+              justify-content: space-between;
+              gap: 12px;
+            }
+            .sig-box {
+              border-top: 1px solid #000;
+              flex: 1;
+              text-align: center;
+              padding-top: 5px;
+              font-size: 10px;
               font-weight: bold;
             }
-            .status-resolved { background: #e8f5e9; color: #2e7d32; }
-            .status-pending { background: #fff3e0; color: #f57c00; }
           </style>
         </head>
         <body>
-          <div class="header">
-            <div class="header-logo">
-              ${logoDataUrl 
-                ? `<img src="${logoDataUrl}" alt="Afsal Traders logo" />` 
-                : `<img src="${window.location.origin}/afsal-logo.png" alt="Afsal Traders logo" onerror="this.style.display='none'" />`
-              }
-            </div>
-            <div class="header-text">
-              <h1>SERVICE TICKET</h1>
-              <div class="ticket-number">${ticket.ticket_number}</div>
+          <div class="receipt-header">
+            <h1>Service Receipt</h1>
+            <div class="shop-contact">Contact: +91-8900978758</div>
+            <div class="ticket-number-box">
+              <div class="ticket-number">#${ticket.ticket_number}</div>
             </div>
           </div>
-          <div class="grid">
-            <div class="section">
-              <div class="label">Customer Name</div>
-              <div class="value">${ticket.customer_name}</div>
-            </div>
-            <div class="section">
-              <div class="label">Phone Number</div>
-              <div class="value">${ticket.customer_phone}</div>
-            </div>
-            <div class="section">
-              <div class="label">Battery Model</div>
-              <div class="value">${ticket.battery_model}</div>
-            </div>
-            <div class="section">
-              <div class="label">Invertor Model</div>
-              <div class="value">${ticket.invertor_model || '-'}</div>
-            </div>
-            <div class="section">
-              <div class="label">Status</div>
-              <div class="value">${ticket.status.replace('_', ' ')}</div>
-            </div>
-            <div class="section">
-              <div class="label">SP Battery</div>
-              <div class="value">${profileName}</div>
-            </div>
-            ${ticket.invertor_model ? `
-            <div class="section">
-              <div class="label">SP Invertor</div>
-              <div class="value">${invertorProfileName || 'Unassigned'}</div>
-            </div>
-            ` : ''}
+
+          <div class="section">
+            <span class="label">Date:</span>
+            <span class="value">${new Date(ticket.created_at).toLocaleDateString('en-IN')}</span>
           </div>
           <div class="section">
-            <div class="label">Issue Description</div>
-            <div class="value">${ticket.issue_description}</div>
+            <span class="label">Customer:</span>
+            <span class="value">${ticket.customer_name}</span>
+          </div>
+          <div class="section">
+            <span class="label">Phone:</span>
+            <span class="value">${ticket.customer_phone}</span>
+          </div>
+          <div class="section">
+            <span class="label">Battery:</span>
+            <span class="value">${ticket.battery_model || '-'}</span>
+          </div>
+          <div class="section">
+            <span class="label">Invertor:</span>
+            <span class="value">${ticket.invertor_model || '-'}</span>
+          </div>
+
+          <div class="label" style="margin-top: 10px;">Issue Reported:</div>
+          <div class="description-box">
+            ${ticket.issue_description || 'No description provided'}
           </div>
           
           ${hasBatteryResolution ? `
           <div class="resolution-section">
-            <h2>🔋 Battery Service</h2>
-            <div class="grid">
-              <div class="section">
-                <div class="label">Rechargeable</div>
-                <div class="value">${ticket.battery_rechargeable ? 'Yes' : 'No'}</div>
-              </div>
-              <div class="section">
-                <div class="label">Price</div>
-                <div class="value price-highlight">₹${(ticket.battery_price || 0).toFixed(2)}</div>
-              </div>
+            <h2>Battery Service</h2>
+            <div class="section">
+              <span class="label">Status:</span>
+              <span class="value">RESOLVED</span>
+            </div>
+            <div class="section">
+              <span class="label">Charge:</span>
+              <span class="value">₹${(ticket.battery_price || 0).toFixed(2)}</span>
             </div>
           </div>
           ` : ''}
           
           ${hasInvertorResolution ? `
           <div class="resolution-section">
-            <h2>⚡ Invertor Service</h2>
-            <div class="grid">
-              ${ticket.invertor_issue_description ? `
-              <div class="section" style="grid-column: span 2;">
-                <div class="label">Issue Description</div>
-                <div class="value">${ticket.invertor_issue_description}</div>
-              </div>
-              ` : ''}
-              <div class="section">
-                <div class="label">Resolved</div>
-                <div class="value">${ticket.invertor_resolved ? 'Yes' : 'No'}</div>
-              </div>
-              <div class="section">
-                <div class="label">Price</div>
-                <div class="value price-highlight">₹${(ticket.invertor_price || 0).toFixed(2)}</div>
-              </div>
+            <h2>Invertor Service</h2>
+            <div class="section">
+              <span class="label">Status:</span>
+              <span class="value">RESOLVED</span>
+            </div>
+            <div class="section">
+              <span class="label">Charge:</span>
+              <span class="value">₹${(ticket.invertor_price || 0).toFixed(2)}</span>
             </div>
           </div>
           ` : ''}
           
           ${(hasBatteryResolution || hasInvertorResolution) ? `
           <div class="total-section">
-            <div class="total-label">TOTAL SERVICE AMOUNT</div>
+            <div class="total-label">TOTAL AMOUNT</div>
             <div class="total-value">₹${totalPrice.toFixed(2)}</div>
             ${ticket.payment_method ? `
-            <div style="margin-top: 10px;">
-              <span class="payment-badge">Payment: ${ticket.payment_method}</span>
-            </div>
+            <div class="payment-info">Paid via: ${ticket.payment_method}</div>
             ` : ''}
           </div>
           ` : ''}
           
+          <div class="terms-section">
+            <strong>Terms & Conditions:</strong><br/>
+            - Not responsible for any data loss.<br/>
+            - Please bring this receipt for pickup.<br/>
+            - Items not collected within 30 days may be disposed of.
+          </div>
+
+          <div class="signature-space">
+            <div class="sig-box">Customer</div>
+            <div class="sig-box">Signatory</div>
+          </div>
+
           <div class="footer">
-            Created: ${new Date(ticket.created_at).toLocaleString('en-IN')}
-            ${ticket.updated_at !== ticket.created_at ? ` | Updated: ${new Date(ticket.updated_at).toLocaleString('en-IN')}` : ''}
+            Printed: ${new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}<br/>
+            Thank you for choosing our service!
           </div>
         </body>
       </html>
@@ -267,11 +262,11 @@ export function PrintTicket({ ticket, profileName, invertorProfileName }: PrintT
 
     printWindow.document.close();
     printWindow.focus();
-    // Wait for image to load before printing
+    // Wait for content to render
     setTimeout(() => {
       printWindow.print();
       printWindow.close();
-    }, 500);
+    }, 250);
   };
 
   return (

@@ -241,104 +241,6 @@ export type Database = {
         }
         Relationships: []
       }
-      shop_sale_items: {
-        Row: {
-          created_at: string
-          id: string
-          model_number: string
-          price: number | null
-          product_id: string | null
-          product_type: string
-          quantity: number
-          sale_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          model_number: string
-          price?: number | null
-          product_id?: string | null
-          product_type?: string
-          quantity?: number
-          sale_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          model_number?: string
-          price?: number | null
-          product_id?: string | null
-          product_type?: string
-          quantity?: number
-          sale_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "shop_sale_items_product_id_fkey"
-            columns: ["product_id"]
-            isOneToOne: false
-            referencedRelation: "products"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "shop_sale_items_sale_id_fkey"
-            columns: ["sale_id"]
-            isOneToOne: false
-            referencedRelation: "shop_sales"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      shop_sales: {
-        Row: {
-          created_at: string
-          customer_name: string
-          id: string
-          sold_by: string
-        }
-        Insert: {
-          created_at?: string
-          customer_name: string
-          id?: string
-          sold_by: string
-        }
-        Update: {
-          created_at?: string
-          customer_name?: string
-          id?: string
-          sold_by?: string
-        }
-        Relationships: []
-      }
-      shop_stock: {
-        Row: {
-          id: string
-          product_id: string
-          quantity: number
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          product_id: string
-          quantity?: number
-          updated_at?: string
-        }
-        Update: {
-          id?: string
-          product_id?: string
-          quantity?: number
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "shop_stock_product_id_fkey"
-            columns: ["product_id"]
-            isOneToOne: true
-            referencedRelation: "products"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       stock_transactions: {
         Row: {
           created_at: string
@@ -401,6 +303,89 @@ export type Database = {
         }
         Relationships: []
       }
+      warehouse_sales: {
+        Row: {
+          created_at: string
+          customer_name: string
+          id: string
+          payment_method: string | null
+          sold_by: string
+          total_amount: number | null
+        }
+        Insert: {
+          created_at?: string
+          customer_name: string
+          id?: string
+          payment_method?: string | null
+          sold_by: string
+          total_amount?: number | null
+        }
+        Update: {
+          created_at?: string
+          customer_name?: string
+          id?: string
+          payment_method?: string | null
+          sold_by?: string
+          total_amount?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warehouse_sales_sold_by_fkey"
+            columns: ["sold_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      warehouse_sale_items: {
+        Row: {
+          created_at: string
+          id: string
+          model_number: string
+          price: number
+          product_id: string | null
+          product_type: string
+          quantity: number
+          sale_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          model_number: string
+          price: number
+          product_id?: string | null
+          product_type?: string
+          quantity: number
+          sale_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          model_number?: string
+          price?: number
+          product_id?: string | null
+          product_type?: string
+          quantity?: number
+          sale_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warehouse_sale_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warehouse_sale_items_sale_id_fkey"
+            columns: ["sale_id"]
+            isOneToOne: false
+            referencedRelation: "warehouse_sales"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       warehouse_stock: {
         Row: {
           id: string
@@ -462,10 +447,9 @@ export type Database = {
         | "procurement_staff"
         | "sp_battery"
         | "sp_invertor"
-        | "seller"
         | "scrap_manager"
       service_status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED"
-      stock_source: "SHOP" | "SUPPLIER" | "WAREHOUSE"
+      stock_source: "SUPPLIER" | "WAREHOUSE"
       transaction_type: "IN" | "OUT"
     }
     CompositeTypes: {
@@ -602,11 +586,10 @@ export const Constants = {
         "procurement_staff",
         "sp_battery",
         "sp_invertor",
-        "seller",
         "scrap_manager",
       ],
       service_status: ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"],
-      stock_source: ["SHOP", "SUPPLIER", "WAREHOUSE"],
+      stock_source: ["SUPPLIER", "WAREHOUSE"],
       transaction_type: ["IN", "OUT"],
     },
   },

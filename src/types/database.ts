@@ -1,10 +1,10 @@
-export type AppRole = 'admin' | 'counter_staff' | 'service_agent' | 'warehouse_staff' | 'procurement_staff' | 'sp_battery' | 'sp_invertor' | 'seller' | 'scrap_manager';
+export type AppRole = 'admin' | 'counter_staff' | 'service_agent' | 'warehouse_staff' | 'procurement_staff' | 'sp_battery' | 'sp_invertor' | 'scrap_manager';
 
 export type ServiceStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
 
 export type TransactionType = 'IN' | 'OUT';
 
-export type StockSource = 'SHOP' | 'SUPPLIER' | 'WAREHOUSE';
+export type StockSource = 'SUPPLIER' | 'WAREHOUSE';
 
 export interface Profile {
   id: string;
@@ -89,6 +89,27 @@ export interface StockTransaction {
   source: StockSource;
   handled_by: string;
   remarks: string | null;
+  created_at: string;
+  product?: Product;
+}
+
+export interface WarehouseSale {
+  id: string;
+  customer_name: string;
+  sold_by: string;
+  total_amount: number;
+  payment_method: string;
+  created_at: string;
+}
+
+export interface WarehouseSaleItem {
+  id: string;
+  sale_id: string;
+  product_id: string;
+  product_type: string;
+  model_number: string;
+  quantity: number;
+  price: number;
   created_at: string;
   product?: Product;
 }

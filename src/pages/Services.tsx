@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, Filter, Download, Trash2 } from 'lucide-react';
+import { Plus, Search, Filter, Download, Trash2, Phone, Battery, Zap, Wrench, ChevronRight } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,10 +29,10 @@ import {
 } from '@/components/ui/alert-dialog';
 
 const statusColors: Record<string, string> = {
-  OPEN: 'bg-chart-1/20 text-chart-1 border-chart-1/30',
-  IN_PROGRESS: 'bg-secondary/20 text-secondary-foreground border-secondary/30',
-  RESOLVED: 'bg-chart-4/20 text-chart-4 border-chart-4/30',
-  CLOSED: 'bg-muted text-muted-foreground border-muted',
+  OPEN: 'bg-amber-500/10 text-amber-500 border-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.2)]',
+  IN_PROGRESS: 'bg-[#4F8CFF]/10 text-[#4F8CFF] border-[#4F8CFF]/20 shadow-[0_0_10px_rgba(79,140,255,0.2)]',
+  RESOLVED: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 shadow-[0_0_10px_rgba(34,197,94,0.2)]',
+  CLOSED: 'bg-slate-500/10 text-slate-600 dark:text-slate-500 border-slate-500/20',
 };
 
 export default function Services() {
@@ -48,22 +48,22 @@ export default function Services() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState<ServiceTicket | null>(null);
   const [ticketToDelete, setTicketToDelete] = useState<ServiceTicket | null>(null);
-  
+
   // Battery resolution state
   const [ticketToResolveBattery, setTicketToResolveBattery] = useState<ServiceTicket | null>(null);
   const [batteryRechargeable, setBatteryRechargeable] = useState<'yes' | 'no' | ''>('');
   const [batteryPrice, setBatteryPrice] = useState('');
-  
+
   // Invertor resolution state
   const [ticketToResolveInvertor, setTicketToResolveInvertor] = useState<ServiceTicket | null>(null);
   const [invertorResolved, setInvertorResolved] = useState<'yes' | 'no' | ''>('');
   const [invertorIssueDescription, setInvertorIssueDescription] = useState('');
   const [invertorPrice, setInvertorPrice] = useState('');
-  
+
   // Close ticket state
   const [ticketToClose, setTicketToClose] = useState<ServiceTicket | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'UPI' | ''>('');
-  
+
   // Form state
   const [formData, setFormData] = useState({
     customer_name: '',
@@ -81,15 +81,23 @@ export default function Services() {
     fetchProfiles();
     fetchServiceAgents();
 
-    const channel = supabase
+    const ticketsChannel = supabase
       .channel('service-tickets-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'service_tickets' }, () => {
         fetchTickets();
       })
       .subscribe();
 
+    const rolesChannel = supabase
+      .channel('user-roles-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_roles' }, () => {
+        fetchServiceAgents();
+      })
+      .subscribe();
+
     return () => {
-      channel.unsubscribe();
+      ticketsChannel.unsubscribe();
+      rolesChannel.unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]);
@@ -127,48 +135,76 @@ export default function Services() {
       .from('user_roles')
       .select('user_id')
       .eq('role', 'sp_battery');
-    
+
     // Get SP Invertor agents
     const { data: invertorData } = await supabase
       .from('user_roles')
       .select('user_id')
       .eq('role', 'sp_invertor');
-    
+
     setSpBatteryAgents((batteryData || []).map((r: { user_id: string }) => r.user_id));
     setSpInvertorAgents((invertorData || []).map((r: { user_id: string }) => r.user_id));
   };
 
   const handleCreateTicket = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!user) return;
 
+    if (!formData.battery_model && !formData.invertor_model) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please provide at least a Battery Model or an Invertor Model.',
+        variant: 'destructive'
+      });
+      return;
+    }
+
     try {
+      const hasBattery = !!formData.battery_model;
       const hasInvertor = !!formData.invertor_model;
-      
-      // Auto-assign to SP Battery (first available)
-      const batteryAgentId = spBatteryAgents.length > 0 ? spBatteryAgents[0] : null;
+
+      // Auto-assign to SP Battery if battery model is provided
+      let batteryAgentId = hasBattery && spBatteryAgents.length > 0 ? spBatteryAgents[0] : null;
       // Auto-assign to SP Invertor if invertor model is provided
-      const invertorAgentId = hasInvertor && spInvertorAgents.length > 0 ? spInvertorAgents[0] : null;
+      let invertorAgentId = hasInvertor && spInvertorAgents.length > 0 ? spInvertorAgents[0] : null;
+
+      // Fallback: If no SP agent is found and current user is an admin, auto-assign to self
+      if (hasBattery && !batteryAgentId && isAdmin) {
+        batteryAgentId = user.id;
+      }
+      if (hasInvertor && !invertorAgentId && isAdmin) {
+        invertorAgentId = user.id;
+      }
+
+      const status = (batteryAgentId || invertorAgentId) ? 'IN_PROGRESS' : 'OPEN';
 
       const { data, error } = await supabase.from('service_tickets').insert({
         customer_name: formData.customer_name,
         customer_phone: formData.customer_phone,
-        battery_model: formData.battery_model,
+        battery_model: formData.battery_model || '-',
         invertor_model: formData.invertor_model || null,
         issue_description: formData.issue_description,
         created_by: user.id,
         assigned_to_battery: batteryAgentId,
         assigned_to_invertor: invertorAgentId,
-        assigned_to: batteryAgentId, // Keep for backward compatibility
-        status: batteryAgentId ? 'IN_PROGRESS' : 'OPEN',
-        battery_resolved: false,
+        assigned_to: batteryAgentId || invertorAgentId, // Keep for backward compatibility
+        status: status,
+        battery_resolved: hasBattery ? false : null,
         invertor_resolved: hasInvertor ? false : null,
       }).select().single();
 
       if (error) throw error;
 
-      toast({ title: 'Ticket created successfully' });
+      if ((hasBattery && !batteryAgentId) || (hasInvertor && !invertorAgentId)) {
+        toast({
+          title: 'Ticket created (Partial assignment)',
+          description: 'One or more parts could not be auto-assigned. Please check assignment manually.',
+          variant: 'default'
+        });
+      } else {
+        toast({ title: 'Ticket created & auto-assigned' });
+      }
       setIsCreateOpen(false);
       setFormData({
         customer_name: '',
@@ -177,10 +213,10 @@ export default function Services() {
         invertor_model: '',
         issue_description: '',
       });
-      
+
       // Show print dialog for new ticket
       setShowNewTicketPrint(data as ServiceTicket);
-      
+
       fetchTickets();
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
@@ -192,10 +228,10 @@ export default function Services() {
     try {
       const { error } = await supabase
         .from('service_tickets')
-        .update({ 
-          assigned_to_battery: assigneeId, 
+        .update({
+          assigned_to_battery: assigneeId,
           assigned_to: assigneeId,
-          status: 'IN_PROGRESS' 
+          status: 'IN_PROGRESS'
         })
         .eq('id', ticketId);
 
@@ -242,7 +278,7 @@ export default function Services() {
 
   const handleDeleteTicket = async () => {
     if (!ticketToDelete) return;
-    
+
     try {
       const { error } = await supabase
         .from('service_tickets')
@@ -275,7 +311,7 @@ export default function Services() {
     try {
       const hasInvertor = !!ticketToResolveBattery.invertor_model;
       const invertorAlreadyResolved = ticketToResolveBattery.invertor_resolved === true;
-      
+
       // Determine if ticket should be marked as RESOLVED
       const shouldResolve = !hasInvertor || invertorAlreadyResolved;
 
@@ -308,7 +344,7 @@ export default function Services() {
       });
 
       toast({ title: 'Battery resolution saved' });
-      
+
       setTicketToResolveBattery(null);
       setBatteryRechargeable('');
       setBatteryPrice('');
@@ -333,7 +369,7 @@ export default function Services() {
 
     try {
       const batteryAlreadyResolved = ticketToResolveInvertor.battery_resolved === true;
-      
+
       // Determine if ticket should be marked as RESOLVED
       const shouldResolve = batteryAlreadyResolved;
 
@@ -349,8 +385,8 @@ export default function Services() {
         updateData.status = 'RESOLVED';
         // Calculate total price
         updateData.service_price = (ticketToResolveInvertor.battery_price || 0) + priceNumber;
-        const batteryNotes = ticketToResolveInvertor.battery_rechargeable !== null 
-          ? `Battery: ${ticketToResolveInvertor.battery_rechargeable ? 'Rechargeable' : 'Not rechargeable'}` 
+        const batteryNotes = ticketToResolveInvertor.battery_rechargeable !== null
+          ? `Battery: ${ticketToResolveInvertor.battery_rechargeable ? 'Rechargeable' : 'Not rechargeable'}`
           : '';
         updateData.resolution_notes = `${batteryNotes}${batteryNotes ? ' | ' : ''}Invertor: ${invertorResolved === 'yes' ? 'Resolved' : 'Not resolved'}${invertorIssueDescription ? ` - ${invertorIssueDescription}` : ''}`;
       }
@@ -370,7 +406,7 @@ export default function Services() {
       });
 
       toast({ title: 'Invertor resolution saved' });
-      
+
       setTicketToResolveInvertor(null);
       setInvertorResolved('');
       setInvertorIssueDescription('');
@@ -412,10 +448,10 @@ export default function Services() {
         .single();
 
       toast({ title: 'Ticket closed' });
-      
+
       // Show print dialog with closed ticket
       setShowClosedPrint(updatedTicket as ServiceTicket);
-      
+
       setTicketToClose(null);
       setPaymentMethod('');
       setSelectedTicket(null);
@@ -432,7 +468,7 @@ export default function Services() {
   };
 
   const handleExportAll = () => {
-    const data = filteredTickets.map(ticket => 
+    const data = filteredTickets.map(ticket =>
       formatTicketForExport(ticket, getProfileName(ticket.assigned_to))
     );
     downloadCSV(data, `service-tickets-${new Date().toISOString().split('T')[0]}`);
@@ -441,6 +477,7 @@ export default function Services() {
   const filteredTickets = tickets.filter(ticket =>
     ticket.customer_name.toLowerCase().includes(search.toLowerCase()) ||
     ticket.battery_model.toLowerCase().includes(search.toLowerCase()) ||
+    (ticket.invertor_model && ticket.invertor_model.toLowerCase().includes(search.toLowerCase())) ||
     (ticket.ticket_number && ticket.ticket_number.toLowerCase().includes(search.toLowerCase()))
   );
 
@@ -485,193 +522,227 @@ export default function Services() {
 
   return (
     <AppLayout>
-      <div className="space-y-6">
+      <div className="space-y-6 relative min-h-[80vh] pb-24">
+        {/* Floating New Ticket Button */}
+        {canCreateTicket && (
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <DialogTrigger asChild>
+              <Button size="lg" className="fixed bottom-8 right-8 z-50 rounded-full h-14 px-6 shadow-[0_8px_32px_rgba(79,140,255,0.35)] bg-gradient-to-r from-[#4F8CFF] to-blue-600 hover:scale-105 hover:shadow-[0_8px_32px_rgba(79,140,255,0.5)] transition-all duration-300">
+                <Plus className="h-5 w-5 mr-2" />
+                <span className="font-semibold tracking-wide">New Ticket</span>
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="glass-card bg-slate-50 dark:bg-[#0B0F19]/95 border-slate-200 dark:border-white/10 text-slate-900 dark:text-white">
+              <DialogHeader>
+                <DialogTitle className="text-xl font-bold">Create Service Ticket</DialogTitle>
+              </DialogHeader>
+              <form onSubmit={handleCreateTicket} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="customer_name" className="text-slate-600 dark:text-slate-500 dark:text-slate-400">Customer Name</Label>
+                    <Input
+                      id="customer_name"
+                      value={formData.customer_name}
+                      onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
+                      required
+                      className="bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5 focus-visible:ring-[#4F8CFF]/50"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="customer_phone" className="text-slate-600 dark:text-slate-500 dark:text-slate-400">Phone Number</Label>
+                    <Input
+                      id="customer_phone"
+                      type="tel"
+                      value={formData.customer_phone}
+                      onChange={(e) => {
+                        const value = e.target.value.replace(/\D/g, '');
+                        setFormData({ ...formData, customer_phone: value });
+                      }}
+                      placeholder="Numbers only"
+                      required
+                      className="bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5 focus-visible:ring-[#4F8CFF]/50"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="battery_model" className="text-slate-600 dark:text-slate-500 dark:text-slate-400">Battery Model (Optional)</Label>
+                    <Input
+                      id="battery_model"
+                      value={formData.battery_model}
+                      onChange={(e) => setFormData({ ...formData, battery_model: e.target.value })}
+                      placeholder="Leave empty for invertor-only"
+                      className="bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5 focus-visible:ring-[#4F8CFF]/50"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="invertor_model" className="text-slate-600 dark:text-slate-500 dark:text-slate-400">Invertor Model (Optional)</Label>
+                    <Input
+                      id="invertor_model"
+                      value={formData.invertor_model}
+                      onChange={(e) => setFormData({ ...formData, invertor_model: e.target.value })}
+                      placeholder="Leave empty for battery-only"
+                      className="bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5 focus-visible:ring-[#4F8CFF]/50"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="issue_description" className="text-slate-600 dark:text-slate-500 dark:text-slate-400">Issue Description</Label>
+                  <Textarea
+                    id="issue_description"
+                    value={formData.issue_description}
+                    onChange={(e) => setFormData({ ...formData, issue_description: e.target.value })}
+                    required
+                    rows={4}
+                    className="bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5 focus-visible:ring-[#4F8CFF]/50"
+                  />
+                </div>
+                <p className="text-sm text-slate-600 dark:text-slate-500 italic">
+                  {formData.battery_model && formData.invertor_model
+                    ? 'Ticket will be assigned to both Battery and Invertor specialists.'
+                    : formData.battery_model
+                      ? 'Ticket will be assigned to Battery specialist only.'
+                      : formData.invertor_model
+                        ? 'Ticket will be assigned to Invertor specialist only.'
+                        : 'Please provide at least one model.'}
+                </p>
+                <Button type="submit" className="w-full bg-[#4F8CFF] hover:bg-blue-600 text-slate-900 dark:text-white font-bold">Create Ticket</Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+        )}
+
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Service Tickets</h1>
-            <p className="text-muted-foreground">Manage customer service requests</p>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white drop-shadow-md">Service Tickets</h1>
+            <p className="text-slate-600 dark:text-slate-500 dark:text-slate-400 mt-1">Manage and track customer service requests</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleExportAll} disabled={filteredTickets.length === 0}>
-              <Download className="h-4 w-4 mr-2" />
-              Export All
+            <Button variant="outline" onClick={handleExportAll} disabled={filteredTickets.length === 0} className="rounded-xl border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-[#1B2438]/50 hover:bg-slate-100 dark:bg-[#1B2438] text-slate-900 dark:text-white">
+              <Download className="h-4 w-4 mr-2 text-slate-600 dark:text-slate-500 dark:text-slate-400" />
+              Export
             </Button>
-            {canCreateTicket && (
-              <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus className="h-4 w-4 mr-2" />
-                    New Ticket
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Create Service Ticket</DialogTitle>
-                  </DialogHeader>
-                  <form onSubmit={handleCreateTicket} className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="customer_name">Customer Name</Label>
-                        <Input
-                          id="customer_name"
-                          value={formData.customer_name}
-                          onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="customer_phone">Phone Number</Label>
-                        <Input
-                          id="customer_phone"
-                          value={formData.customer_phone}
-                          onChange={(e) => setFormData({ ...formData, customer_phone: e.target.value })}
-                          required
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="battery_model">Battery Model</Label>
-                        <Input
-                          id="battery_model"
-                          value={formData.battery_model}
-                          onChange={(e) => setFormData({ ...formData, battery_model: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="invertor_model">Invertor Model (Optional)</Label>
-                        <Input
-                          id="invertor_model"
-                          value={formData.invertor_model}
-                          onChange={(e) => setFormData({ ...formData, invertor_model: e.target.value })}
-                          placeholder="Leave empty for battery-only"
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="issue_description">Issue Description</Label>
-                      <Textarea
-                        id="issue_description"
-                        value={formData.issue_description}
-                        onChange={(e) => setFormData({ ...formData, issue_description: e.target.value })}
-                        required
-                        rows={4}
-                      />
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      {formData.invertor_model 
-                        ? 'Ticket will be assigned to SP Battery and SP Invertor'
-                        : 'Ticket will be assigned to SP Battery only'}
-                    </p>
-                    <Button type="submit" className="w-full">Create Ticket</Button>
-                  </form>
-                </DialogContent>
-              </Dialog>
-            )}
           </div>
         </div>
 
-        <div className="flex flex-col gap-4 sm:flex-row">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center justify-between bg-white dark:bg-[#111827]/40 p-2 rounded-2xl border border-slate-200 dark:border-white/5 backdrop-blur-sm">
+          {/* Animated Tabs */}
+          <div className="flex bg-slate-50 dark:bg-[#0B0F19] p-1 rounded-xl border border-slate-200 dark:border-white/5 overflow-x-auto no-scrollbar">
+            {['all', 'OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'].map(status => (
+              <button
+                key={status}
+                onClick={() => setStatusFilter(status)}
+                className={`flex-shrink-0 px-4 py-2 rounded-lg text-[13px] font-bold tracking-wide uppercase transition-all duration-300 ${statusFilter === status ? 'bg-slate-100 dark:bg-[#1B2438] text-[#4F8CFF] shadow-sm border-b-2 border-[#4F8CFF]' : 'text-slate-600 dark:text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-white/5 border-b-2 border-transparent'}`}
+              >
+                {status === 'all' ? 'All Tickets' : status.replace('_', ' ')}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-600 dark:text-slate-500 dark:text-slate-400" />
             <Input
-              placeholder="Search tickets..."
+              placeholder="Search by customer, ticket ID, model..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-10"
+              className="pl-10 rounded-xl bg-slate-50 dark:bg-[#0B0F19] border-slate-200 dark:border-white/10 text-slate-800 dark:text-slate-200 placeholder:text-slate-600 dark:text-slate-500 focus-visible:ring-[#4F8CFF]/50 h-11"
             />
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-full sm:w-[180px]">
-              <Filter className="h-4 w-4 mr-2" />
-              <SelectValue placeholder="Filter by status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              <SelectItem value="OPEN">Open</SelectItem>
-              <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
-              <SelectItem value="RESOLVED">Resolved</SelectItem>
-              <SelectItem value="CLOSED">Closed</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="animate-pulse text-muted-foreground">Loading tickets...</div>
+          <div className="flex items-center justify-center py-20">
+            <div className="animate-pulse flex flex-col items-center gap-4">
+              <div className="h-10 w-10 border-4 border-[#4F8CFF]/30 border-t-[#4F8CFF] rounded-full animate-spin" />
+              <span className="text-slate-600 dark:text-slate-500 dark:text-slate-400 font-medium tracking-wide">Loading tickets...</span>
+            </div>
           </div>
         ) : filteredTickets.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12">
-              <p className="text-muted-foreground">No tickets found</p>
-            </CardContent>
-          </Card>
+          <div className="flex flex-col items-center justify-center py-24 text-center glass-card rounded-3xl border border-slate-200 dark:border-white/5 bg-white dark:bg-[#111827]/50">
+            <Wrench className="h-12 w-12 text-slate-600 mb-4" />
+            <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">No tickets found</h3>
+            <p className="text-slate-600 dark:text-slate-500 dark:text-slate-400 max-w-sm">There are no service tickets matching your criteria right now.</p>
+          </div>
         ) : (
-          <div className="grid gap-4">
-            {filteredTickets.map((ticket) => (
-              <Card 
-                key={ticket.id} 
-                className="cursor-pointer hover:shadow-md transition-shadow"
+          <div className="grid gap-4 animate-in slide-in-from-bottom-4 duration-500">
+            <style>{`
+              @keyframes slideInUp {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+              }
+            `}</style>
+            {filteredTickets.map((ticket, index) => (
+              <div
+                key={ticket.id}
+                className="group relative cursor-pointer rounded-2xl bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 p-5 transition-all duration-300 hover:-translate-y-1 hover:bg-slate-50 dark:bg-[#151C2F] hover:border-[#4F8CFF]/20 hover:shadow-[0_8px_32px_rgba(0,0,0,0.3)] overflow-hidden"
+                style={{ animation: `slideInUp 0.4s ease-out ${index * 0.05}s both` }}
                 onClick={() => setSelectedTicket(ticket)}
               >
-                <CardContent className="p-6">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                {/* Glow effect on hover */}
+                <div className="absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-[#4F8CFF]/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between relative z-10">
+                  <div className="flex-1 flex items-start gap-4">
+                    <div className="hidden sm:flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-200 dark:border-white/5 shadow-inner group-hover:border-[#4F8CFF]/30 transition-colors">
+                      <Wrench className="h-5 w-5 text-slate-600 dark:text-slate-500 group-hover:text-[#4F8CFF] transition-colors" />
+                    </div>
                     <div className="space-y-2 flex-1">
                       <div className="flex items-center gap-3 flex-wrap">
                         {ticket.ticket_number && (
-                          <Badge variant="outline" className="font-mono text-xs">
+                          <span className="font-mono text-[10px] tracking-widest text-[#4F8CFF] bg-[#4F8CFF]/10 px-2 py-0.5 rounded border border-[#4F8CFF]/20">
                             {ticket.ticket_number}
-                          </Badge>
+                          </span>
                         )}
-                        <h3 className="font-semibold text-lg">{ticket.customer_name}</h3>
-                        <Badge variant="outline" className={statusColors[ticket.status]}>
+                        <h3 className="font-bold text-slate-900 dark:text-white tracking-wide text-[16px] group-hover:text-[#4F8CFF] transition-colors">{ticket.customer_name}</h3>
+                        <Badge variant="outline" className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider font-bold ${statusColors[ticket.status]}`}>
                           {ticket.status.replace('_', ' ')}
                         </Badge>
                       </div>
-                      <p className="text-sm text-muted-foreground">{ticket.customer_phone}</p>
-                      <p className="font-medium">
-                        {ticket.battery_model}
-                        {ticket.invertor_model && ` / ${ticket.invertor_model}`}
-                      </p>
-                      <p className="text-sm text-muted-foreground line-clamp-2">
-                        {ticket.issue_description}
-                      </p>
-                      {/* Show resolution status */}
-                      <div className="flex gap-2 flex-wrap">
-                        {ticket.battery_resolved !== null && (
-                          <Badge variant={ticket.battery_resolved ? "default" : "secondary"}>
-                            Battery: {ticket.battery_resolved ? '✓ Resolved' : 'Pending'}
-                          </Badge>
-                        )}
-                        {ticket.invertor_model && ticket.invertor_resolved !== null && (
-                          <Badge variant={ticket.invertor_resolved ? "default" : "secondary"}>
-                            Invertor: {ticket.invertor_resolved ? '✓ Resolved' : 'Pending'}
-                          </Badge>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-slate-600 dark:text-slate-500 dark:text-slate-400">
+                        <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-slate-600 dark:text-slate-500" /> {ticket.customer_phone}</span>
+                        <span className="flex items-center gap-1.5 truncate max-w-[200px]"><Battery className="h-3.5 w-3.5 text-slate-600 dark:text-slate-500" /> {ticket.battery_model || 'N/A'}</span>
+                        {ticket.invertor_model && (
+                          <span className="flex items-center gap-1.5 truncate max-w-[200px]"><Zap className="h-3.5 w-3.5 text-slate-600 dark:text-slate-500" /> {ticket.invertor_model}</span>
                         )}
                       </div>
-                    </div>
-                    <div className="flex flex-col items-start sm:items-end gap-2 text-sm">
-                      <span className="text-muted-foreground">
-                        {formatDistanceToNow(new Date(ticket.created_at), { addSuffix: true })}
-                      </span>
-                      <span className="text-muted-foreground">
-                        Battery: {getProfileName(ticket.assigned_to_battery)}
-                      </span>
-                      {ticket.invertor_model && (
-                        <span className="text-muted-foreground">
-                          Invertor: {getProfileName(ticket.assigned_to_invertor)}
-                        </span>
-                      )}
-                      {ticket.status === 'RESOLVED' && (
-                        <span className="font-semibold text-chart-4">
-                          Total: ₹{getTotalPrice(ticket).toFixed(2)}
-                        </span>
-                      )}
+                      <p className="text-sm text-slate-600 dark:text-slate-500 line-clamp-1 italic group-hover:text-slate-600 dark:text-slate-500 dark:text-slate-400 transition-colors">"{ticket.issue_description}"</p>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
+
+                  <div className="flex items-center gap-6 sm:justify-end mt-2 sm:mt-0">
+                    {/* Assigned tech avatars */}
+                    <div className="flex -space-x-2">
+                      {ticket.assigned_to_battery && (
+                        <div className="h-8 w-8 rounded-full border-2 border-[#111827] bg-slate-100 dark:bg-[#1B2438] flex items-center justify-center text-slate-700 dark:text-slate-300 relative group/avatar" title={`Battery: ${getProfileName(ticket.assigned_to_battery)}`}>
+                          <span className="text-[10px] font-bold">{getProfileName(ticket.assigned_to_battery).charAt(0)}</span>
+                          <div className="absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-[#111827] bg-emerald-500" />
+                        </div>
+                      )}
+                      {ticket.invertor_model && ticket.assigned_to_invertor && (
+                        <div className="h-8 w-8 rounded-full border-2 border-[#111827] bg-slate-100 dark:bg-[#1B2438] flex items-center justify-center text-slate-700 dark:text-slate-300 relative group/avatar" title={`Invertor: ${getProfileName(ticket.assigned_to_invertor)}`}>
+                          <span className="text-[10px] font-bold">{getProfileName(ticket.assigned_to_invertor).charAt(0)}</span>
+                          <div className="absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-[#111827] bg-emerald-500" />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col items-end gap-1 text-sm">
+                      <span className="text-[11px] font-semibold tracking-wider text-slate-600 dark:text-slate-500 uppercase">
+                        {formatDistanceToNow(new Date(ticket.created_at), { addSuffix: true })}
+                      </span>
+                      {ticket.status === 'RESOLVED' && (
+                        <span className="font-bold text-emerald-400 tracking-wide drop-shadow-[0_0_8px_rgba(34,197,94,0.3)]">
+                          ₹{(ticket.battery_price || 0) + (ticket.invertor_price || 0)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 ml-2">
+                      <ChevronRight className="h-5 w-5 text-slate-600 dark:text-slate-500 group-hover:text-[#4F8CFF] group-hover:scale-110 transition-transform" />
+                    </div>
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
         )}
@@ -725,7 +796,7 @@ export default function Services() {
                     </div>
                   )}
                 </div>
-                
+
                 <div>
                   <Label className="text-muted-foreground">Issue Description</Label>
                   <p className="mt-1">{selectedTicket.issue_description}</p>
@@ -762,23 +833,23 @@ export default function Services() {
 
                 <div className="flex flex-col gap-4 sm:flex-row sm:justify-between">
                   <div className="flex gap-2 flex-wrap">
-                    <PrintTicket 
-                      ticket={selectedTicket} 
-                      profileName={getProfileName(selectedTicket.assigned_to_battery)} 
+                    <PrintTicket
+                      ticket={selectedTicket}
+                      profileName={getProfileName(selectedTicket.assigned_to_battery)}
                       invertorProfileName={getProfileName(selectedTicket.assigned_to_invertor)}
                     />
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => handleExportSingle(selectedTicket)}
                     >
                       <Download className="h-4 w-4 mr-2" />
                       Export
                     </Button>
                     {canDeleteTicket && (
-                      <Button 
-                        variant="destructive" 
-                        size="sm" 
+                      <Button
+                        variant="destructive"
+                        size="sm"
                         onClick={() => setTicketToDelete(selectedTicket)}
                       >
                         <Trash2 className="h-4 w-4 mr-2" />
@@ -786,7 +857,7 @@ export default function Services() {
                       </Button>
                     )}
                   </div>
-                  
+
                   <div className="flex gap-2 flex-wrap">
                     {/* Assign SP Battery */}
                     {canAssignTicket && !selectedTicket.assigned_to_battery && selectedTicket.status === 'OPEN' && (
@@ -821,51 +892,51 @@ export default function Services() {
                     )}
 
                     {/* Resolve Battery */}
-                    {canResolveBattery(selectedTicket) && 
-                     selectedTicket.status === 'IN_PROGRESS' && 
-                     !selectedTicket.battery_resolved && (
-                      <Button 
-                        variant="outline"
-                        onClick={() => {
-                          const ticket = selectedTicket;
-                          setSelectedTicket(null);
-                          // Small delay to allow first dialog to close and focus to reset
-                          setTimeout(() => {
-                            setTicketToResolveBattery(ticket);
-                            setBatteryRechargeable('');
-                            setBatteryPrice('');
-                          }, 100);
-                        }}
-                      >
-                        Resolve Battery
-                      </Button>
-                    )}
+                    {canResolveBattery(selectedTicket) &&
+                      selectedTicket.status === 'IN_PROGRESS' &&
+                      !selectedTicket.battery_resolved && (
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            const ticket = selectedTicket;
+                            setSelectedTicket(null);
+                            // Small delay to allow first dialog to close and focus to reset
+                            setTimeout(() => {
+                              setTicketToResolveBattery(ticket);
+                              setBatteryRechargeable('');
+                              setBatteryPrice('');
+                            }, 100);
+                          }}
+                        >
+                          Resolve Battery
+                        </Button>
+                      )}
 
                     {/* Resolve Invertor */}
-                    {canResolveInvertor(selectedTicket) && 
-                     selectedTicket.status === 'IN_PROGRESS' && 
-                     !selectedTicket.invertor_resolved && (
-                      <Button 
-                        variant="outline"
-                        onClick={() => {
-                          const ticket = selectedTicket;
-                          setSelectedTicket(null);
-                          // Small delay to allow first dialog to close and focus to reset
-                          setTimeout(() => {
-                            setTicketToResolveInvertor(ticket);
-                            setInvertorResolved('');
-                            setInvertorIssueDescription('');
-                            setInvertorPrice('');
-                          }, 100);
-                        }}
-                      >
-                        Resolve Invertor
-                      </Button>
-                    )}
+                    {canResolveInvertor(selectedTicket) &&
+                      selectedTicket.status === 'IN_PROGRESS' &&
+                      !selectedTicket.invertor_resolved && (
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            const ticket = selectedTicket;
+                            setSelectedTicket(null);
+                            // Small delay to allow first dialog to close and focus to reset
+                            setTimeout(() => {
+                              setTicketToResolveInvertor(ticket);
+                              setInvertorResolved('');
+                              setInvertorIssueDescription('');
+                              setInvertorPrice('');
+                            }, 100);
+                          }}
+                        >
+                          Resolve Invertor
+                        </Button>
+                      )}
 
                     {/* Close Ticket */}
                     {canCloseTicket && selectedTicket.status === 'RESOLVED' && (
-                      <Button 
+                      <Button
                         onClick={() => {
                           setSelectedTicket(null);
                           setTicketToClose(selectedTicket);
@@ -891,8 +962,8 @@ export default function Services() {
             <form onSubmit={handleBatteryResolveSubmit} className="space-y-4">
               <div className="space-y-3">
                 <Label>Battery Rechargeable?</Label>
-                <RadioGroup 
-                  value={batteryRechargeable} 
+                <RadioGroup
+                  value={batteryRechargeable}
                   onValueChange={(val) => setBatteryRechargeable(val as 'yes' | 'no')}
                 >
                   <div className="flex items-center space-x-2">
@@ -944,8 +1015,8 @@ export default function Services() {
             <form onSubmit={handleInvertorResolveSubmit} className="space-y-4">
               <div className="space-y-3">
                 <Label>Resolved?</Label>
-                <RadioGroup 
-                  value={invertorResolved} 
+                <RadioGroup
+                  value={invertorResolved}
                   onValueChange={(val) => setInvertorResolved(val as 'yes' | 'no')}
                 >
                   <div className="flex items-center space-x-2">
@@ -1034,9 +1105,9 @@ export default function Services() {
                   </Select>
                 </div>
                 <div className="flex justify-end gap-2">
-                  <PrintTicket 
-                    ticket={ticketToClose} 
-                    profileName={getProfileName(ticketToClose.assigned_to_battery)} 
+                  <PrintTicket
+                    ticket={ticketToClose}
+                    profileName={getProfileName(ticketToClose.assigned_to_battery)}
                     invertorProfileName={getProfileName(ticketToClose.assigned_to_invertor)}
                   />
                   <Button type="button" variant="outline" onClick={() => setTicketToClose(null)}>
@@ -1057,7 +1128,7 @@ export default function Services() {
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Ticket?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will permanently delete ticket {ticketToDelete?.ticket_number} for {ticketToDelete?.customer_name}. 
+                This will permanently delete ticket {ticketToDelete?.ticket_number} for {ticketToDelete?.customer_name}.
                 This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -1067,7 +1138,7 @@ export default function Services() {
                 Delete
               </AlertDialogAction>
             </AlertDialogFooter>
-        </AlertDialogContent>
+          </AlertDialogContent>
         </AlertDialog>
 
         {/* Print After Close Dialog */}
@@ -1079,16 +1150,16 @@ export default function Services() {
             {showClosedPrint && (
               <div className="space-y-4">
                 <p className="text-muted-foreground">
-                  Ticket <strong>{showClosedPrint.ticket_number}</strong> has been closed with payment received. 
+                  Ticket <strong>{showClosedPrint.ticket_number}</strong> has been closed with payment received.
                   Would you like to print the final ticket?
                 </p>
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => setShowClosedPrint(null)}>
                     Close
                   </Button>
-                  <PrintTicket 
-                    ticket={showClosedPrint} 
-                    profileName={getProfileName(showClosedPrint.assigned_to_battery)} 
+                  <PrintTicket
+                    ticket={showClosedPrint}
+                    profileName={getProfileName(showClosedPrint.assigned_to_battery)}
                     invertorProfileName={getProfileName(showClosedPrint.assigned_to_invertor)}
                   />
                 </div>
@@ -1106,16 +1177,16 @@ export default function Services() {
             {showNewTicketPrint && (
               <div className="space-y-4">
                 <p className="text-muted-foreground">
-                  Ticket <strong>{showNewTicketPrint.ticket_number}</strong> has been created. 
+                  Ticket <strong>{showNewTicketPrint.ticket_number}</strong> has been created.
                   Would you like to print the ticket?
                 </p>
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => setShowNewTicketPrint(null)}>
                     Close
                   </Button>
-                  <PrintTicket 
-                    ticket={showNewTicketPrint} 
-                    profileName={getProfileName(showNewTicketPrint.assigned_to_battery)} 
+                  <PrintTicket
+                    ticket={showNewTicketPrint}
+                    profileName={getProfileName(showNewTicketPrint.assigned_to_battery)}
                     invertorProfileName={getProfileName(showNewTicketPrint.assigned_to_invertor)}
                   />
                 </div>
