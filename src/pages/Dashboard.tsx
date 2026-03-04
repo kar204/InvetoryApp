@@ -313,12 +313,12 @@ export default function Dashboard() {
             trendValue={`${stats.todayStockOut} units sold`}
           />
           <StatsCard
-            title="Scrap Value"
-            value={`₹${stats.scrapInValue.toLocaleString('en-IN')}`}
+            title="Scrap In / Out"
+            value={stats.scrapInCount}
             icon={Recycle}
             variant="secondary"
             trend="up"
-            trendValue={`${stats.scrapInCount} units`}
+            trendValue={`${stats.scrapInCount} units in`}
           />
         </div>
 

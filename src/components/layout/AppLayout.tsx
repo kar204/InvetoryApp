@@ -240,7 +240,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                   <ThemeToggle />
                 </div>
 
-                <div className="hidden sm:flex items-center gap-2 pl-2">
+                <div className="flex items-center gap-2 pl-2">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button className="h-9 w-9 rounded-full bg-gradient-to-br from-[#4F8CFF] to-indigo-600 p-[2px] shadow-[0_0_15px_rgba(79,140,255,0.15)] group cursor-pointer hover:shadow-[0_0_20px_rgba(79,140,255,0.25)] transition-all outline-none">
