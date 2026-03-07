@@ -186,9 +186,11 @@ export default function Dashboard() {
       // Today's sales revenue: fetch sale items for today's sales
       const todaySaleIds = (todaySalesRes.data || []).map((s: any) => s.id);
       let todaySalesRevenue = 0;
+      let todayUnitsSold = 0;
       if (todaySaleIds.length > 0) {
         const { data: saleItems } = await supabase.from('warehouse_sale_items').select('price, quantity').in('sale_id', todaySaleIds);
         todaySalesRevenue = (saleItems || []).reduce((acc: number, item: any) => acc + ((item.price || 0) * (item.quantity || 1)), 0);
+        todayUnitsSold = (saleItems || []).reduce((acc: number, item: any) => acc + (item.quantity || 0), 0);
       }
 
       const scrapEntries = (scrapRes.data || []) as any[];
@@ -205,7 +207,7 @@ export default function Dashboard() {
         totalStock,
         lowStockCount: lowStock.length,
         inProgressTickets: inProgressRes.data?.length || inProgressRes.count || 0,
-        todaySalesCount: todaySaleIds.length,
+        todaySalesCount: todayUnitsSold,
         todaySalesRevenue,
         scrapInCount,
         scrapInValue,
@@ -252,7 +254,7 @@ export default function Dashboard() {
 
   const stockMoveData = [
     { name: 'Stock In', value: stats.todayStockIn },
-    { name: 'Stock Out', value: stats.todayStockOut }
+    { name: 'Sale', value: stats.todaySalesCount }
   ];
 
   const CustomTooltip = ({ active, payload }: any) => {
@@ -306,11 +308,11 @@ export default function Dashboard() {
           />
           <StatsCard
             title="Total Sale Count of Products"
-            value={stats.todayStockOut}
+            value={stats.todaySalesCount}
             icon={TrendingUp}
             variant="success"
-            trend={stats.todayStockOut > 0 ? "up" : "neutral"}
-            trendValue={`${stats.todayStockOut} units sold`}
+            trend={stats.todaySalesCount > 0 ? "up" : "neutral"}
+            trendValue={`${stats.todaySalesCount} units sold`}
           />
           <StatsCard
             title="Scrap In / Out"

@@ -34,6 +34,7 @@ export default function Inventory() {
   const [products, setProducts] = useState<Product[]>([]);
   const [stock, setStock] = useState<WarehouseStock[]>([]);
   const [loading, setLoading] = useState(true);
+  const [recordingSale, setRecordingSale] = useState(false);
   const [search, setSearch] = useState('');
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
@@ -326,6 +327,9 @@ export default function Inventory() {
       return;
     }
 
+    if (recordingSale) return; // Prevent double submission
+    setRecordingSale(true);
+
     try {
       const totalAmount = saleItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
@@ -370,15 +374,7 @@ export default function Inventory() {
             .update({ quantity: newQty })
             .eq('id', currentStock.id);
 
-          // Also record as a stock transaction for full history
-          await supabase.from('stock_transactions').insert({
-            product_id: item.productId,
-            quantity: item.quantity,
-            transaction_type: 'OUT',
-            source: 'WAREHOUSE',
-            remarks: `Sale to ${saleForm.customer_name}`,
-            handled_by: user.id
-          });
+          // Stock transaction is automatically created by the trigger function on warehouse_sale_items insert
         }
       }
 
@@ -390,6 +386,8 @@ export default function Inventory() {
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
       toast({ title: 'Error recording sale', description: errorMessage, variant: 'destructive' });
+    } finally {
+      setRecordingSale(false);
     }
   };
 
@@ -655,9 +653,9 @@ export default function Inventory() {
     }
   };
 
-  const canManageProducts = hasAnyRole(['admin', 'procurement_staff']);
+  const canManageProducts = hasAnyRole(['admin', 'procurement_staff', 'warehouse_staff']);
   const canManageStock = hasAnyRole(['admin', 'warehouse_staff', 'procurement_staff']);
-  const canDeleteProducts = hasRole('admin');
+  const canDeleteProducts = hasAnyRole(['admin', 'warehouse_staff']);
 
   const getTransactionOptions = () => {
     // Only Stock In for destination warehouse
@@ -724,7 +722,7 @@ export default function Inventory() {
               <Download className="h-4 w-4 mr-2" />
               Export
             </Button>
-            {isAdmin && (
+            {hasAnyRole(['admin', 'warehouse_staff']) && (
               <>
                 <Button variant="outline" onClick={handleDownloadTemplate}>
                   <Download className="h-4 w-4 mr-2" />
@@ -980,8 +978,8 @@ export default function Inventory() {
                       )}
                     </div>
 
-                    <Button type="submit" className="w-full" disabled={saleItems.length === 0}>
-                      Confirm and Record Sale
+                    <Button type="submit" className="w-full" disabled={saleItems.length === 0 || recordingSale}>
+                      {recordingSale ? 'Recording Sale...' : 'Confirm and Record Sale'}
                     </Button>
                   </form>
                 </DialogContent>

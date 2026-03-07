@@ -1,14 +1,27 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpCircle, ArrowDownCircle, Search } from 'lucide-react';
+import { ArrowUpCircle, ArrowDownCircle, Search, RefreshCw, ShoppingCart, Package, Trash2 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { StockTransaction, Profile } from '@/types/database';
 import { format } from 'date-fns';
+import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 interface ScrapEntry {
   id: string;
@@ -36,12 +49,30 @@ interface ScrapTransactionRow {
   recorded_by: string;
 }
 
+interface SaleRecord {
+  id: string;
+  created_at: string;
+  customer_name: string;
+  payment_method: string;
+  total_amount: number;
+  sold_by: string;
+  items: any[];
+}
+
 export default function Transactions() {
+  const { hasRole } = useAuth();
+  const { toast } = useToast();
   const [transactions, setTransactions] = useState<StockTransaction[]>([]);
+  const [sales, setSales] = useState<SaleRecord[]>([]);
   const [scrapEntries, setScrapEntries] = useState<ScrapEntry[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [deletingSaleId, setDeletingSaleId] = useState<string | null>(null);
+  const [saleToDelete, setSaleToDelete] = useState<SaleRecord | null>(null);
+
+  const isAdmin = hasRole('admin');
 
   useEffect(() => {
     fetchData();
@@ -49,10 +80,16 @@ export default function Transactions() {
 
   const fetchData = async () => {
     try {
-      const [transRes, scrapRes, profilesRes] = await Promise.all([
+      const [transRes, salesRes, scrapRes, profilesRes] = await Promise.all([
         supabase
           .from('stock_transactions')
           .select('*, product:products(*)')
+          .eq('transaction_type', 'IN') // Only fetch IN transactions
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('warehouse_sales')
+          .select('*, items:warehouse_sale_items(*, product:products(*))')
           .order('created_at', { ascending: false })
           .limit(100),
         supabase
@@ -63,14 +100,23 @@ export default function Transactions() {
         supabase.from('profiles').select('*'),
       ]);
 
-      setTransactions((transRes.data as StockTransaction[]) || []);
+      // Filter transactions to only show IN (already filtered at query level, but double check)
+      const inTransactions = (transRes.data as StockTransaction[])?.filter(t => t.transaction_type === 'IN') || [];
+      setTransactions(inTransactions);
+      setSales((salesRes.data as SaleRecord[]) || []);
       setScrapEntries((scrapRes.data as ScrapEntry[]) || []);
       setProfiles((profilesRes.data as Profile[]) || []);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await fetchData();
   };
 
   const getProfileName = (userId: string) => {
@@ -78,20 +124,22 @@ export default function Transactions() {
     return profile?.name || 'Unknown';
   };
 
-  const filteredTransactions = transactions.filter(trans => {
-    const searchLower = search.trim().toLowerCase();
-    if (!searchLower) return true;
+  const filteredTransactions = transactions
+    .filter((trans, index, arr) => arr.findIndex(t => t.id === trans.id) === index) // Remove duplicates by ID
+    .filter(trans => {
+      const searchLower = search.trim().toLowerCase();
+      if (!searchLower) return true;
 
-    const productName = trans.product?.name?.toLowerCase() || '';
-    const productModel = trans.product?.model?.toLowerCase() || '';
-    const remarks = trans.remarks?.toLowerCase() || '';
-    const source = trans.source?.toLowerCase() || '';
-    const type = trans.transaction_type?.toLowerCase() || '';
-    const combinedName = `${productName} ${productModel} ${remarks} ${source} ${type}`;
+      const productName = trans.product?.name?.toLowerCase() || '';
+      const productModel = trans.product?.model?.toLowerCase() || '';
+      const remarks = trans.remarks?.toLowerCase() || '';
+      const source = trans.source?.toLowerCase() || '';
+      const type = trans.transaction_type?.toLowerCase() || '';
+      const combinedName = `${productName} ${productModel} ${remarks} ${source} ${type}`;
 
-    const searchTerms = searchLower.split(/\s+/);
-    return searchTerms.every(term => combinedName.includes(term));
-  });
+      const searchTerms = searchLower.split(/\s+/);
+      return searchTerms.every(term => combinedName.includes(term));
+    });
 
   // Build dual IN/OUT rows for scrap transactions
   const scrapTransactionRows: ScrapTransactionRow[] = [];
@@ -140,6 +188,76 @@ export default function Transactions() {
     return searchTerms.every(term => combined.includes(term));
   });
 
+  // Handle delete sale - reverts the sale and restores stock
+  const handleDeleteSale = async () => {
+    if (!saleToDelete || deletingSaleId) return;
+
+    setDeletingSaleId(saleToDelete.id);
+
+    try {
+      // First, get the sale items to restore stock
+      const { data: saleItems, error: fetchItemsError } = await supabase
+        .from('warehouse_sale_items')
+        .select('*')
+        .eq('sale_id', saleToDelete.id);
+
+      if (fetchItemsError) throw fetchItemsError;
+
+      // Restore stock for each item
+      for (const item of saleItems || []) {
+        // Get current stock
+        const { data: currentStock, error: stockError } = await supabase
+          .from('warehouse_stock')
+          .select('quantity')
+          .eq('product_id', item.product_id)
+          .single();
+
+        if (stockError) {
+          console.error('Error fetching stock:', stockError);
+          continue;
+        }
+
+        // Calculate new quantity (add back the sold quantity)
+        const newQuantity = (currentStock?.quantity || 0) + item.quantity;
+
+        // Update stock
+        const { error: updateError } = await supabase
+          .from('warehouse_stock')
+          .update({ quantity: newQuantity })
+          .eq('product_id', item.product_id);
+
+        if (updateError) {
+          console.error('Error restoring stock:', updateError);
+        }
+      }
+
+      // Delete sale items first (due to foreign key)
+      const { error: deleteItemsError } = await supabase
+        .from('warehouse_sale_items')
+        .delete()
+        .eq('sale_id', saleToDelete.id);
+
+      if (deleteItemsError) throw deleteItemsError;
+
+      // Delete the sale
+      const { error: deleteSaleError } = await supabase
+        .from('warehouse_sales')
+        .delete()
+        .eq('id', saleToDelete.id);
+
+      if (deleteSaleError) throw deleteSaleError;
+
+      toast({ title: 'Sale reverted successfully', description: 'Stock has been restored' });
+      setSaleToDelete(null);
+      fetchData();
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      toast({ title: 'Error reverting sale', description: errorMessage, variant: 'destructive' });
+    } finally {
+      setDeletingSaleId(null);
+    }
+  };
+
   return (
     <AppLayout>
       <div className="space-y-6">
@@ -148,14 +266,26 @@ export default function Transactions() {
           <p className="text-muted-foreground">View all stock and scrap transaction history</p>
         </div>
 
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search transactions..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-10 max-w-md"
-          />
+        <div className="flex gap-3 items-center">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search transactions..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-10 max-w-md"
+            />
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="gap-2"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
         </div>
 
         {loading ? (
@@ -165,8 +295,9 @@ export default function Transactions() {
         ) : (
           <Tabs defaultValue="stock" className="w-full">
             <TabsList className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-white/5 p-1 rounded-xl w-fit mb-4">
-              <TabsTrigger value="stock" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-[#4F8CFF] data-[state=active]:shadow-sm">Stock Transactions ({filteredTransactions.length})</TabsTrigger>
-              <TabsTrigger value="scrap" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-[#4F8CFF] data-[state=active]:shadow-sm">Scrap Transactions ({filteredScrapRows.length})</TabsTrigger>
+              <TabsTrigger value="stock" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-[#4F8CFF] data-[state=active]:shadow-sm">Stock In ({filteredTransactions.length})</TabsTrigger>
+              <TabsTrigger value="sales" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-emerald-500 data-[state=active]:shadow-sm">Sales ({sales.length})</TabsTrigger>
+              <TabsTrigger value="scrap" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-[#4F8CFF] data-[state=active]:shadow-sm">Scrap ({filteredScrapRows.length})</TabsTrigger>
             </TabsList>
 
             <TabsContent value="stock" className="mt-4">
@@ -204,6 +335,75 @@ export default function Transactions() {
                                 {sign}{trans.quantity}
                               </div>
                               <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold">By {getProfileName(trans.handled_by)}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </TabsContent>
+
+            <TabsContent value="sales" className="mt-4">
+              <div className="space-y-6 relative before:absolute before:left-[70px] sm:before:left-[110px] before:top-2 before:bottom-2 before:w-px before:bg-white/10 ml-0 sm:ml-4 animate-in fade-in duration-500 pb-12">
+                {sales.length === 0 ? (
+                  <div className="text-center text-slate-600 dark:text-slate-500 py-12 font-medium">No sales found</div>
+                ) : (
+                  sales.map((sale) => {
+                    const totalQty = sale.items?.reduce((acc: number, cur: any) => acc + (cur.quantity || 0), 0) || 0;
+                    
+                    return (
+                      <div key={sale.id} className="relative flex gap-4 sm:gap-8 items-start group overflow-hidden sm:overflow-visible p-1 sm:p-0">
+                        <div className="w-14 sm:w-20 shrink-0 text-right pt-4 relative z-10 pl-0 sm:pl-2">
+                          <div className="text-[11px] font-bold text-slate-600 dark:text-slate-500 dark:text-slate-400 uppercase tracking-widest leading-tight">{format(new Date(sale.created_at), 'MMM dd')}</div>
+                          <div className="text-[10px] text-slate-600 dark:text-slate-500 font-medium">{format(new Date(sale.created_at), 'HH:mm')}</div>
+                          <div className="absolute right-[-23px] sm:right-[-37px] top-5 w-3 h-3 rounded-full bg-white dark:bg-[#111827] border-2 border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] group-hover:scale-[1.7] transition-transform duration-300" />
+                        </div>
+                        <div className="flex-1 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-2xl p-6 hover:-translate-y-1 hover:bg-slate-50 dark:bg-[#151C2F] hover:border-emerald-500/30 hover:shadow-[0_8px_32px_rgba(0,0,0,0.3)] transition-all duration-300 cursor-pointer">
+                          <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <h3 className="font-bold text-slate-800 dark:text-slate-200 text-lg tracking-wide group-hover:text-slate-900 dark:hover:text-white transition-colors">{sale.customer_name || 'Walking Customer'}</h3>
+                                <Badge variant="outline" className="px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider font-bold text-emerald-500 bg-emerald-500/10 border-emerald-500/20">
+                                  SALE
+                                </Badge>
+                                <Badge variant="outline" className="bg-slate-50 dark:bg-[#0B0F19] text-slate-600 dark:text-slate-500 dark:text-slate-400 border-slate-200 dark:border-white/10">{sale.payment_method}</Badge>
+                              </div>
+                              {sale.items && sale.items.length > 0 && (
+                                <div className="text-[11px] text-muted-foreground flex flex-wrap gap-1">
+                                  {sale.items.map((item: any, idx: number) => (
+                                    <span key={idx} className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
+                                      {item.quantity}x {item.product?.name || item.model_number}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <div className="flex flex-col items-end gap-1 shrink-0">
+                                <div className="text-2xl font-black drop-shadow-md tracking-tight text-red-400">
+                                  -{totalQty}
+                                </div>
+                                <div className="text-sm font-bold text-emerald-500">
+                                  ₹{sale.total_amount?.toLocaleString('en-IN')}
+                                </div>
+                                <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold">By {getProfileName(sale.sold_by)}</p>
+                              </div>
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 rounded-full text-slate-500 hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSaleToDelete(sale);
+                                  }}
+                                  title="Revert this sale"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -269,6 +469,36 @@ export default function Transactions() {
           </Tabs>
         )}
       </div>
+
+      {/* Delete Sale Confirmation Dialog */}
+      <AlertDialog open={!!saleToDelete} onOpenChange={() => !deletingSaleId && setSaleToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revert This Sale?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the sale record and restore the stock quantities. 
+              This action cannot be undone.
+              {saleToDelete && (
+                <div className="mt-2 p-2 bg-muted rounded-md">
+                  <p><strong>Customer:</strong> {saleToDelete.customer_name || 'Walking Customer'}</p>
+                  <p><strong>Amount:</strong> ₹{saleToDelete.total_amount?.toLocaleString('en-IN')}</p>
+                  <p><strong>Items:</strong> {saleToDelete.items?.length || 0} product(s)</p>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingSaleId}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteSale}
+              disabled={deletingSaleId}
+              className="bg-red-500 hover:bg-red-600 text-white"
+            >
+              {deletingSaleId ? 'Reverting...' : 'Yes, Revert Sale'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }

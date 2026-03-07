@@ -474,12 +474,45 @@ export default function Services() {
     downloadCSV(data, `service-tickets-${new Date().toISOString().split('T')[0]}`);
   };
 
-  const filteredTickets = tickets.filter(ticket =>
-    ticket.customer_name.toLowerCase().includes(search.toLowerCase()) ||
-    ticket.battery_model.toLowerCase().includes(search.toLowerCase()) ||
-    (ticket.invertor_model && ticket.invertor_model.toLowerCase().includes(search.toLowerCase())) ||
-    (ticket.ticket_number && ticket.ticket_number.toLowerCase().includes(search.toLowerCase()))
-  );
+  // Role-based access checks (must be before filteredTickets)
+  const canCreateTicket = hasAnyRole(['admin', 'counter_staff']);
+  const canAssignTicket = hasAnyRole(['admin', 'counter_staff']);
+  const canDeleteTicket = hasRole('admin');
+  const isAdmin = hasRole('admin');
+  const isSpBattery = hasRole('sp_battery');
+  const isSpInvertor = hasRole('sp_invertor');
+  const isCounterStaff = hasRole('counter_staff');
+  const isServiceAgent = hasRole('service_agent');
+  const canCloseTicket = isCounterStaff || isAdmin;
+
+  const filteredTickets = tickets.filter(ticket => {
+    // First apply search filter
+    const matchesSearch =
+      ticket.customer_name.toLowerCase().includes(search.toLowerCase()) ||
+      ticket.battery_model.toLowerCase().includes(search.toLowerCase()) ||
+      (ticket.invertor_model && ticket.invertor_model.toLowerCase().includes(search.toLowerCase())) ||
+      (ticket.ticket_number && ticket.ticket_number.toLowerCase().includes(search.toLowerCase()));
+
+    if (!matchesSearch) return false;
+
+    // Role-based filtering
+    if (isAdmin || isCounterStaff || isServiceAgent) {
+      // Admin, counter_staff, and service_agent see all tickets
+      return true;
+    }
+
+    if (isSpBattery) {
+      // sp_battery only sees tickets with battery component assigned to them AND that actually have a battery
+      return ticket.assigned_to_battery === user?.id && ticket.battery_model !== '-' && ticket.battery_model !== null;
+    }
+
+    if (isSpInvertor) {
+      // sp_invertor only sees tickets with invertor component assigned to them AND that actually have an invertor
+      return ticket.assigned_to_invertor === user?.id && ticket.invertor_model !== null && ticket.invertor_model !== '';
+    }
+
+    return false;
+  });
 
   const getProfileName = (userId: string | null) => {
     if (!userId) return 'Unassigned';
@@ -490,15 +523,6 @@ export default function Services() {
   // Filter profiles for assignment
   const spBatteryProfiles = profiles.filter(p => spBatteryAgents.includes(p.user_id));
   const spInvertorProfiles = profiles.filter(p => spInvertorAgents.includes(p.user_id));
-
-  const canCreateTicket = hasAnyRole(['admin', 'counter_staff']);
-  const canAssignTicket = hasAnyRole(['admin', 'counter_staff']);
-  const canDeleteTicket = hasRole('admin');
-  const isAdmin = hasRole('admin');
-  const isSpBattery = hasRole('sp_battery');
-  const isSpInvertor = hasRole('sp_invertor');
-  const isCounterStaff = hasRole('counter_staff');
-  const canCloseTicket = isCounterStaff || isAdmin;
 
   // Check if current user can resolve battery part
   const canResolveBattery = (ticket: ServiceTicket) => {
