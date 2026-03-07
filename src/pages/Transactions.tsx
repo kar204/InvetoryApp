@@ -370,11 +370,11 @@ export default function Transactions() {
                                 </Badge>
                                 <Badge variant="outline" className="bg-slate-50 dark:bg-[#0B0F19] text-slate-600 dark:text-slate-500 dark:text-slate-400 border-slate-200 dark:border-white/10">{sale.payment_method}</Badge>
                               </div>
-                              {sale.items && sale.items.length > 0 && (
+{sale.items && sale.items.length > 0 && (
                                 <div className="text-[11px] text-muted-foreground flex flex-wrap gap-1">
                                   {sale.items.map((item: any, idx: number) => (
                                     <span key={idx} className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-                                      {item.quantity}x {item.product?.name || item.model_number}
+                                      {item.quantity}x {item.product?.model || item.model_number}
                                     </span>
                                   ))}
                                 </div>

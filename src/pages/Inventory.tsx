@@ -1303,11 +1303,11 @@ export default function Inventory() {
                             </TableCell>
                             <TableCell>
                               <div className="font-medium">{act.details}</div>
-                              {act.items.length > 0 && (
+{act.items.length > 0 && (
                                 <div className="text-[10px] text-muted-foreground mt-1">
                                   {act.items.map((i: any, idx: number) => (
                                     <span key={idx}>
-                                      {i.quantity}x {i.product?.name || i.model_number}
+                                      {i.quantity}x {i.product?.model || i.model_number}
                                       {idx < act.items.length - 1 ? ', ' : ''}
                                     </span>
                                   ))}
