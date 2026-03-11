@@ -1,4 +1,4 @@
-export type AppRole = 'admin' | 'counter_staff' | 'service_agent' | 'warehouse_staff' | 'procurement_staff' | 'sp_battery' | 'sp_invertor' | 'scrap_manager';
+export type AppRole = 'admin' | 'counter_staff' | 'service_agent' | 'warehouse_staff' | 'procurement_staff' | 'sp_battery' | 'sp_invertor' | 'scrap_manager' | 'service_technician';
 
 export type ServiceStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
 
@@ -112,4 +112,51 @@ export interface WarehouseSaleItem {
   price: number;
   created_at: string;
   product?: Product;
+}
+
+export interface HomeServiceRequest {
+  id: string;
+  request_number: string;
+  customer_name: string;
+  customer_phone: string;
+  address: string;
+  battery_model: string | null;
+  inverter_model: string | null;
+  issue_description: string;
+  status: ServiceStatus;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH';
+  created_by: string;
+  assigned_to: string | null;
+  assigned_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HomeServiceResolution {
+  id: string;
+  request_id: string;
+  battery_resolved: boolean | null;
+  battery_resolution_notes: string | null;
+  inverter_resolved: boolean | null;
+  inverter_resolution_notes: string | null;
+  total_amount: number | null;
+  payment_method: 'CASH' | 'CARD' | 'UPI' | null;
+  resolved_by: string;
+  resolved_at: string;
+  closed_by: string;
+  closed_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  address: string | null;
+  city: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 }

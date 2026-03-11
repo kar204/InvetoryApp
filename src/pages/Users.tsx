@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useDeferredValue, useEffect, useState } from 'react';
 import { Plus, Search, Shield, UserCog, Trash2 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import {
@@ -23,6 +23,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Profile, UserRole, AppRole } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
+import { usePollingRefresh } from '@/hooks/usePollingRefresh';
 import { format } from 'date-fns';
 
 const allRoles: { value: AppRole; label: string; description: string }[] = [
@@ -31,6 +32,7 @@ const allRoles: { value: AppRole; label: string; description: string }[] = [
   { value: 'sp_battery', label: 'SP Battery', description: 'Handle battery service requests' },
   { value: 'sp_invertor', label: 'SP Invertor', description: 'Handle invertor service requests' },
   { value: 'service_agent', label: 'Service Agent (Legacy)', description: 'Work on assigned tickets' },
+  { value: 'service_technician', label: 'Service Technician', description: 'Field service - home/office visits' },
   { value: 'warehouse_staff', label: 'Warehouse Staff', description: 'Manage inventory stock' },
   { value: 'procurement_staff', label: 'Procurement Staff', description: 'Add products and manage procurement' },
   { value: 'scrap_manager', label: 'Scrap Manager', description: 'View and manage scrap entries' },
@@ -66,6 +68,7 @@ export default function Users() {
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRoles, setNewUserRoles] = useState<AppRole[]>([]);
   const [addingUser, setAddingUser] = useState(false);
+  const deferredSearch = useDeferredValue(search);
 
   const isAdmin = hasRole('admin');
 
@@ -108,6 +111,8 @@ export default function Users() {
       setLoading(false);
     }
   };
+
+  usePollingRefresh(fetchData, 45000, { enabled: isAdmin });
 
   const getUserRoles = (userId: string): AppRole[] => {
     return userRoles.filter(ur => ur.user_id === userId).map(ur => ur.role);
@@ -269,8 +274,8 @@ export default function Users() {
   };
 
   const filteredProfiles = profiles.filter(profile =>
-    profile.name.toLowerCase().includes(search.toLowerCase()) ||
-    profile.email.toLowerCase().includes(search.toLowerCase())
+    profile.name.toLowerCase().includes(deferredSearch.toLowerCase()) ||
+    profile.email.toLowerCase().includes(deferredSearch.toLowerCase())
   );
 
   return (
@@ -289,11 +294,11 @@ export default function Users() {
                   Add User
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-md">
+              <DialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[85vh] overflow-hidden p-0">
                 <DialogHeader>
-                  <DialogTitle>Add New User</DialogTitle>
+                  <DialogTitle className="px-6 pt-6">Add New User</DialogTitle>
                 </DialogHeader>
-                <form onSubmit={handleAddUser} className="space-y-4">
+                <form onSubmit={handleAddUser} className="space-y-4 overflow-y-auto px-6 pb-6">
                   <div className="space-y-2">
                     <Label htmlFor="new-name">Full Name</Label>
                     <Input
@@ -329,7 +334,7 @@ export default function Users() {
                   </div>
                   <div className="space-y-2">
                     <Label>Assign Roles (Optional)</Label>
-                    <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-2">
+                    <div className="max-h-48 space-y-2 overflow-y-auto rounded-lg border p-2">
                       {allRoles.map(role => (
                         <div
                           key={role.value}
@@ -362,7 +367,7 @@ export default function Users() {
             placeholder="Search users..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-10 max-w-md"
+            className="max-w-md pl-10"
           />
         </div>
 
@@ -385,21 +390,21 @@ export default function Users() {
                 filteredProfiles.map((profile) => {
                   const roles = getUserRoles(profile.user_id);
                   return (
-                    <div key={profile.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-6 hover:bg-slate-100 dark:bg-[#1B2438] transition-colors duration-200 group gap-4 relative">
+                    <div key={profile.id} className="group relative flex flex-col justify-between gap-4 p-4 transition-colors duration-200 hover:bg-slate-100 dark:bg-[#1B2438] sm:flex-row sm:items-center sm:p-6">
                       {/* Active row indicator */}
                       <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#4F8CFF] scale-y-0 group-hover:scale-y-100 transition-transform origin-center" />
 
-                      <div className="flex items-center gap-5 pl-2">
+                      <div className="flex min-w-0 items-center gap-4 pl-2">
                         <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#4F8CFF] to-blue-600 flex items-center justify-center text-slate-900 dark:text-white font-bold text-lg shadow-[0_0_15px_rgba(79,140,255,0.3)] group-hover:scale-105 transition-transform shrink-0 ring-2 ring-[#0B0F19]">
                           {profile.name.charAt(0).toUpperCase()}
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <div className="font-bold text-slate-800 dark:text-slate-200 text-lg tracking-wide group-hover:text-slate-900 dark:hover:text-white transition-colors">{profile.name}</div>
-                          <div className="text-sm text-slate-600 dark:text-slate-500 dark:text-slate-400">{profile.email}</div>
+                          <div className="truncate text-sm text-slate-600 dark:text-slate-500 dark:text-slate-400">{profile.email}</div>
                         </div>
                       </div>
 
-                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6 sm:w-[55%] justify-between">
+                      <div className="flex w-full flex-col items-start justify-between gap-4 sm:w-[55%] sm:flex-row sm:items-center sm:gap-6">
                         <div className="flex flex-wrap gap-2">
                           {roles.length === 0 ? (
                             <span className="text-sm text-slate-600 dark:text-slate-500 italic">No roles assigned</span>
@@ -421,7 +426,7 @@ export default function Users() {
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        <div className="flex shrink-0 items-center gap-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
                           <Button
                             variant="ghost"
                             size="sm"
@@ -453,25 +458,27 @@ export default function Users() {
 
         {/* Edit Roles Dialog */}
         <Dialog open={!!selectedUser} onOpenChange={() => setSelectedUser(null)}>
-          <DialogContent>
-            <DialogHeader>
+          <DialogContent className="flex h-[85vh] w-[calc(100vw-2rem)] max-h-[85vh] max-w-xl flex-col overflow-hidden p-0 sm:h-auto">
+            <DialogHeader className="shrink-0 px-6 pt-6">
               <DialogTitle>Edit User Roles</DialogTitle>
             </DialogHeader>
             {selectedUser && (
-              <div className="space-y-6">
-                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted">
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="mx-6 mt-2 shrink-0 rounded-lg bg-muted p-3">
+                  <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-background">
                     <span className="font-medium">
                       {selectedUser.name.charAt(0).toUpperCase()}
                     </span>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="font-medium">{selectedUser.name}</p>
-                    <p className="text-sm text-muted-foreground">{selectedUser.email}</p>
+                    <p className="truncate text-sm text-muted-foreground">{selectedUser.email}</p>
+                  </div>
                   </div>
                 </div>
 
-                <div className="space-y-3">
+                <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-6">
                   {allRoles.map(role => (
                     <div
                       key={role.value}
@@ -492,9 +499,11 @@ export default function Users() {
                   ))}
                 </div>
 
-                <Button onClick={handleSaveRoles} className="w-full">
-                  Save Changes
-                </Button>
+                <div className="shrink-0 border-t bg-background px-6 py-4">
+                  <Button onClick={handleSaveRoles} className="w-full">
+                    Save Changes
+                  </Button>
+                </div>
               </div>
             )}
           </DialogContent>

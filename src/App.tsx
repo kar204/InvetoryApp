@@ -12,6 +12,7 @@ import Services from "./pages/Services";
 import Inventory from "./pages/Inventory";
 import Scrap from "./pages/Scrap";
 import Transactions from "./pages/Transactions";
+import Customers from "./pages/Customers";
 import Users from "./pages/Users";
 import NotFound from "./pages/NotFound";
 
@@ -46,6 +47,11 @@ const App = () => (
             <Route path="/scrap" element={
               <ProtectedRoute>
                 <Scrap />
+              </ProtectedRoute>
+            } />
+            <Route path="/customers" element={
+              <ProtectedRoute>
+                <Customers />
               </ProtectedRoute>
             } />
             <Route path="/transactions" element={

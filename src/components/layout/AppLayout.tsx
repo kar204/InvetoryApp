@@ -9,16 +9,36 @@ import { useToast } from '@/hooks/use-toast';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { useState, useEffect, useRef } from 'react';
+import type { AppRole } from '@/types/database';
 
 interface AppLayoutProps {
   children: React.ReactNode;
 }
+
+type ProductSearchResult = { id: string; name: string; model: string; qty?: number };
+type InShopSearchResult = { id: string; ticket_number: string | null; customer_name: string; customer_phone: string };
+type HomeSearchResult = { id: string; request_number: string; customer_name: string; customer_phone: string };
+type CustomerSearchResult = { id: string; name: string; phone: string; email: string | null };
+type StockSearchRow = { product_id: string; quantity: number | null };
 
 export function AppLayout({ children }: AppLayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { profile, roles, signOut, hasAnyRole } = useAuth();
   const [open, setOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<{
+    products: ProductSearchResult[];
+    inShopTickets: InShopSearchResult[];
+    homeRequests: HomeSearchResult[];
+    customers: CustomerSearchResult[];
+  }>({
+    products: [],
+    inShopTickets: [],
+    homeRequests: [],
+    customers: [],
+  });
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<{ id: string, title: string, desc: string, time: Date, type: 'sale' | 'alert' | 'info' }[]>([]);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -35,6 +55,98 @@ export function AppLayout({ children }: AppLayoutProps) {
     document.addEventListener("keydown", down)
     return () => document.removeEventListener("keydown", down)
   }, [])
+
+  useEffect(() => {
+    if (!open) {
+      setCommandQuery('');
+      setSearchResults({ products: [], inShopTickets: [], homeRequests: [], customers: [] });
+      setSearching(false);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    const q = commandQuery.trim();
+    if (!open) return;
+    if (q.length < 2) {
+      setSearchResults({ products: [], inShopTickets: [], homeRequests: [], customers: [] });
+      setSearching(false);
+      return;
+    }
+
+    const timeout = window.setTimeout(async () => {
+      try {
+        setSearching(true);
+        const canSearchCustomers = hasAnyRole(['admin' as AppRole]);
+
+        const productsPromise = (async () => {
+          const { data: products } = await supabase
+            .from('products')
+            .select('id, name, model')
+            .or(`name.ilike.%${q}%,model.ilike.%${q}%`)
+            .limit(8);
+
+          const rows = (products || []) as ProductSearchResult[];
+          const ids = rows.map((p) => p.id);
+          let qtyById: Record<string, number> = {};
+
+          if (ids.length > 0) {
+            const { data: stockRows } = await supabase
+              .from('warehouse_stock')
+              .select('product_id, quantity')
+              .in('product_id', ids);
+
+            qtyById = ((stockRows || []) as StockSearchRow[]).reduce((acc, r) => {
+              acc[r.product_id] = r.quantity ?? 0;
+              return acc;
+            }, {} as Record<string, number>);
+          }
+
+          return rows.map((p) => ({ ...p, qty: qtyById[p.id] }));
+        })();
+
+        const inShopPromise = supabase
+          .from('service_tickets')
+          .select('id, ticket_number, customer_name, customer_phone')
+          .or(`customer_name.ilike.%${q}%,customer_phone.ilike.%${q}%,ticket_number.ilike.%${q}%,battery_model.ilike.%${q}%,invertor_model.ilike.%${q}%`)
+          .limit(8);
+
+        const homePromise = supabase
+          .from('home_service_requests')
+          .select('id, request_number, customer_name, customer_phone')
+          .or(`customer_name.ilike.%${q}%,customer_phone.ilike.%${q}%,request_number.ilike.%${q}%,battery_model.ilike.%${q}%,inverter_model.ilike.%${q}%`)
+          .limit(8);
+
+        const customersPromise = canSearchCustomers
+          ? supabase
+              .from('customers')
+              .select('id, name, phone, email')
+              .or(`name.ilike.%${q}%,phone.ilike.%${q}%,email.ilike.%${q}%`)
+              .limit(8)
+          : Promise.resolve({ data: [] as CustomerSearchResult[] });
+
+        const [products, inShopRes, homeRes, customersRes] = await Promise.all([
+          productsPromise,
+          inShopPromise,
+          homePromise,
+          customersPromise,
+        ]);
+
+        setSearchResults({
+          products,
+          inShopTickets: ((inShopRes.data || []) as InShopSearchResult[]),
+          homeRequests: ((homeRes.data || []) as HomeSearchResult[]),
+          customers: ((customersRes.data || []) as CustomerSearchResult[]),
+        });
+      } catch (err) {
+        console.error('Global search error:', err);
+        setSearchResults({ products: [], inShopTickets: [], homeRequests: [], customers: [] });
+      } finally {
+        setSearching(false);
+      }
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [commandQuery, hasAnyRole, open]);
 
   useEffect(() => {
     // Listen for new sales
@@ -271,9 +383,13 @@ export function AppLayout({ children }: AppLayoutProps) {
           </header>
 
           <CommandDialog open={open} onOpenChange={setOpen}>
-            <CommandInput placeholder="Type a command or search modules..." />
+            <CommandInput
+              placeholder="Search anything (products, tickets, customers...)"
+              value={commandQuery}
+              onValueChange={setCommandQuery}
+            />
             <CommandList>
-              <CommandEmpty>No results found.</CommandEmpty>
+              <CommandEmpty>{searching ? 'Searching...' : 'No results found.'}</CommandEmpty>
               <CommandGroup heading="Quick Navigation">
                 <CommandItem onSelect={() => { setOpen(false); navigate('/dashboard') }}>
                   <LayoutDashboard className="mr-2 h-4 w-4 text-[#4F8CFF]" />
@@ -308,6 +424,90 @@ export function AppLayout({ children }: AppLayoutProps) {
                   <span>Sign Out completely</span>
                 </CommandItem>
               </CommandGroup>
+
+              {(searchResults.products.length > 0 ||
+                searchResults.inShopTickets.length > 0 ||
+                searchResults.homeRequests.length > 0 ||
+                searchResults.customers.length > 0) && (
+                <>
+                  {searchResults.products.length > 0 && (
+                    <CommandGroup heading="Inventory">
+                      {searchResults.products.map((p) => (
+                        <CommandItem
+                          key={p.id}
+                          value={`${p.name} ${p.model}`}
+                          onSelect={() => {
+                            setOpen(false);
+                            navigate(`/inventory?q=${encodeURIComponent(p.model || p.name)}`);
+                          }}
+                        >
+                          <Package className="mr-2 h-4 w-4 text-amber-500" />
+                          <span className="flex-1 truncate">{p.name} — {p.model}</span>
+                          {typeof p.qty === 'number' && (
+                            <span className="text-xs text-slate-500 dark:text-slate-400">Qty {p.qty}</span>
+                          )}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  )}
+
+                  {searchResults.inShopTickets.length > 0 && (
+                    <CommandGroup heading="In-Shop Tickets">
+                      {searchResults.inShopTickets.map((t) => (
+                        <CommandItem
+                          key={t.id}
+                          value={`${t.ticket_number || ''} ${t.customer_name} ${t.customer_phone}`}
+                          onSelect={() => {
+                            setOpen(false);
+                            navigate(`/services?tab=in-shop&q=${encodeURIComponent(t.ticket_number || t.customer_phone || t.customer_name)}`);
+                          }}
+                        >
+                          <Wrench className="mr-2 h-4 w-4 text-emerald-400" />
+                          <span className="flex-1 truncate">{t.ticket_number || 'Ticket'} — {t.customer_name}</span>
+                          <span className="text-xs text-slate-500 dark:text-slate-400">{t.customer_phone}</span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  )}
+
+                  {searchResults.homeRequests.length > 0 && (
+                    <CommandGroup heading="Home Service">
+                      {searchResults.homeRequests.map((r) => (
+                        <CommandItem
+                          key={r.id}
+                          value={`${r.request_number} ${r.customer_name} ${r.customer_phone}`}
+                          onSelect={() => {
+                            setOpen(false);
+                            navigate(`/services?tab=home-service&q=${encodeURIComponent(r.request_number || r.customer_phone || r.customer_name)}`);
+                          }}
+                        >
+                          <Wrench className="mr-2 h-4 w-4 text-[#4F8CFF]" />
+                          <span className="flex-1 truncate">{r.request_number} — {r.customer_name}</span>
+                          <span className="text-xs text-slate-500 dark:text-slate-400">{r.customer_phone}</span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  )}
+
+                  {searchResults.customers.length > 0 && (
+                    <CommandGroup heading="Customers">
+                      {searchResults.customers.map((c) => (
+                        <CommandItem
+                          key={c.id}
+                          onSelect={() => {
+                            setOpen(false);
+                            navigate(`/customers?q=${encodeURIComponent(commandQuery.trim())}`);
+                          }}
+                        >
+                          <Users className="mr-2 h-4 w-4" />
+                          <span className="flex-1">{c.name}</span>
+                          <span className="text-xs text-muted-foreground">{c.phone}</span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  )}
+                </>
+              )}
             </CommandList>
           </CommandDialog>
 

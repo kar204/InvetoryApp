@@ -5,7 +5,8 @@ import {
   ClipboardList,
   Users,
   LogOut,
-  Recycle
+  Recycle,
+  UserRound
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -22,12 +23,21 @@ import {
 } from '@/components/ui/sidebar';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
+import type { AppRole } from '@/types/database';
 
-const menuItems = [
+type MenuItem = {
+  title: string;
+  icon: typeof LayoutDashboard;
+  path: string;
+  roles: AppRole[];
+};
+
+const menuItems: MenuItem[] = [
   { title: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', roles: ['admin', 'warehouse_staff', 'procurement_staff'] },
-  { title: 'Service Tickets', icon: Wrench, path: '/services', roles: ['admin', 'counter_staff', 'service_agent', 'sp_battery', 'sp_invertor'] },
+  { title: 'Service Tickets', icon: Wrench, path: '/services', roles: ['admin', 'counter_staff', 'service_agent', 'sp_battery', 'sp_invertor', 'service_technician'] },
   { title: 'Inventory', icon: Package, path: '/inventory', roles: ['admin', 'warehouse_staff', 'procurement_staff'] },
   { title: 'Scrap', icon: Recycle, path: '/scrap', roles: ['admin', 'scrap_manager'] },
+  { title: 'Customers', icon: UserRound, path: '/customers', roles: ['admin'] },
   { title: 'Transactions', icon: ClipboardList, path: '/transactions', roles: ['admin', 'warehouse_staff', 'procurement_staff'] },
   { title: 'Users', icon: Users, path: '/users', roles: ['admin'] },
 ];
@@ -37,9 +47,7 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const { profile, roles, signOut, hasAnyRole } = useAuth();
 
-  const filteredMenuItems = menuItems.filter(item =>
-    hasAnyRole(item.roles as any[])
-  );
+  const filteredMenuItems = menuItems.filter((item) => hasAnyRole(item.roles));
 
   const handleSignOut = async () => {
     await signOut();
@@ -47,8 +55,8 @@ export function AppSidebar() {
   };
 
   return (
-    <Sidebar className="border-r border-slate-200 dark:border-transparent bg-slate-50 dark:bg-[#0B0F19] transition-all duration-300 ease-in-out group/sidebar shadow-xl dark:shadow-none">
-      <SidebarHeader className="p-4 border-b border-slate-200 dark:border-white/[0.04] bg-transparent">
+    <Sidebar className="border-r border-white/10 dark:border-white/5 bg-white/60 dark:bg-[#0B0F19]/70 backdrop-blur-xl shadow-xl dark:shadow-none transition-all duration-300 ease-in-out group/sidebar">
+      <SidebarHeader className="p-4 border-b border-slate-200/50 dark:border-white/[0.06] bg-transparent">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#4F8CFF]/20 to-[#4F8CFF]/5 shadow-[0_0_15px_rgba(79,140,255,0.15)] overflow-hidden border border-[#4F8CFF]/20">
             <img
@@ -68,20 +76,20 @@ export function AppSidebar() {
       </SidebarHeader>
       <SidebarContent className="bg-transparent pt-4">
         <SidebarGroup>
-          <SidebarGroupLabel className="text-slate-600 dark:text-slate-500/70 text-[10px] font-bold uppercase tracking-[0.15em] mb-2 px-4 transition-all group-data-[state=collapsed]/sidebar:opacity-0 group-data-[state=collapsed]/sidebar:-translate-x-2">Navigation</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-slate-500 dark:text-slate-500/70 text-[10px] font-bold uppercase tracking-[0.15em] mb-2 px-4 transition-all group-data-[state=collapsed]/sidebar:opacity-0 group-data-[state=collapsed]/sidebar:-translate-x-2">Navigation</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu className="px-2 space-y-1">
+            <SidebarMenu className="px-2 space-y-1.5">
               {filteredMenuItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton
                     isActive={location.pathname === item.path}
                     onClick={() => navigate(item.path)}
-                    className="cursor-pointer group relative flex items-center rounded-lg transition-all duration-200 overflow-hidden text-slate-600 dark:text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:bg-[#1B2438] data-[active=true]:bg-gradient-to-r data-[active=true]:from-[#4F8CFF]/15 data-[active=true]:to-transparent data-[active=true]:text-[#4F8CFF]"
+                    className="cursor-pointer group relative flex items-center rounded-xl transition-all duration-300 ease-out overflow-hidden text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-white/[0.06] backdrop-blur-sm border border-transparent hover:border-white/20 dark:hover:border-white/10 shadow-sm hover:shadow-md hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:hover:shadow-[0_8px_30px_rgba(0,0,0,0.2)] data-[active=true]:bg-gradient-to-r data-[active=true]:from-[#4F8CFF]/20 data-[active=true]:to-transparent data-[active=true]:text-[#4F8CFF] data-[active=true]:border-[#4F8CFF]/20 data-[active=true]:shadow-[0_0_20px_rgba(79,140,255,0.15)]"
                   >
                     {location.pathname === item.path && (
-                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-[#4F8CFF] rounded-r-full shadow-[0_0_10px_rgba(79,140,255,0.6)]" />
+                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-7 bg-[#4F8CFF] rounded-r-full shadow-[0_0_12px_rgba(79,140,255,0.7)]" />
                     )}
-                    <item.icon className={`h-4 w-4 shrink-0 transition-all duration-200 ${location.pathname === item.path ? 'drop-shadow-[0_0_8px_rgba(79,140,255,0.5)]' : 'group-hover:scale-110'}`} />
+                    <item.icon className="h-4 w-4 shrink-0 transition-all duration-200" />
                     <span className="font-medium tracking-wide text-sm ml-3">{item.title}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -90,7 +98,16 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-
+      <SidebarFooter className="border-t border-slate-200/50 dark:border-white/[0.06] p-4 bg-transparent">
+        <Button
+          variant="ghost"
+          className="w-full justify-start text-slate-600 dark:text-slate-400 hover:text-red-500 hover:bg-red-50/60 dark:hover:bg-red-500/10 backdrop-blur-sm transition-all duration-200 border border-transparent hover:border-red-500/20"
+          onClick={handleSignOut}
+        >
+          <LogOut className="h-4 w-4 mr-3" />
+          <span className="font-medium">Sign Out</span>
+        </Button>
+      </SidebarFooter>
     </Sidebar>
   );
 }

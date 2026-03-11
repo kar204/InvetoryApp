@@ -4,12 +4,14 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { StatsCard } from '@/components/dashboard/StatsCard';
 import { RecentTickets } from '@/components/dashboard/RecentTickets';
 import { LowStockAlert } from '@/components/dashboard/LowStockAlert';
+import { SLATracking } from '@/components/dashboard/SLATracking';
 import { supabase } from '@/integrations/supabase/client';
 import { ServiceTicket, WarehouseStock, Product } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { downloadCSV, formatDashboardStatsForExport } from '@/utils/exportUtils';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, Cell, Tooltip as RechartsTooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { usePollingRefresh } from '@/hooks/usePollingRefresh';
 
 export default function Dashboard() {
   const { profile } = useAuth();
@@ -19,6 +21,9 @@ export default function Dashboard() {
     totalStock: 0,
     lowStockCount: 0,
     inProgressTickets: 0,
+    homeOpenRequests: 0,
+    homeInProgressRequests: 0,
+    homeClosedToday: 0,
     todaySalesCount: 0,
     todaySalesRevenue: 0,
     scrapInCount: 0,
@@ -44,6 +49,13 @@ export default function Dashboard() {
       })
       .subscribe();
 
+    const homeServiceChannel = supabase
+      .channel('dashboard-home-service')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'home_service_requests' }, () => {
+        fetchDashboardData();
+      })
+      .subscribe();
+
     const stockChannel = supabase
       .channel('dashboard-stock')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'warehouse_stock' }, () => {
@@ -61,6 +73,7 @@ export default function Dashboard() {
 
     return () => {
       ticketChannel.unsubscribe();
+      homeServiceChannel.unsubscribe();
       stockChannel.unsubscribe();
       saleChannel.unsubscribe();
     };
@@ -155,6 +168,9 @@ export default function Dashboard() {
         openRes,
         inProgressRes,
         closedTodayRes,
+        homeOpenRes,
+        homeInProgressRes,
+        homeClosedTodayRes,
         stockRes,
         todaySalesRes,
         scrapRes,
@@ -165,6 +181,9 @@ export default function Dashboard() {
         supabase.from('service_tickets').select('id', { count: 'exact' }).eq('status', 'OPEN'),
         supabase.from('service_tickets').select('id', { count: 'exact' }).eq('status', 'IN_PROGRESS'),
         supabase.from('service_tickets').select('id', { count: 'exact' }).eq('status', 'CLOSED').gte('updated_at', today.toISOString()),
+        supabase.from('home_service_requests').select('id', { count: 'exact' }).eq('status', 'OPEN'),
+        supabase.from('home_service_requests').select('id', { count: 'exact' }).eq('status', 'IN_PROGRESS'),
+        supabase.from('home_service_requests').select('id', { count: 'exact' }).eq('status', 'CLOSED').gte('updated_at', today.toISOString()),
         supabase.from('warehouse_stock').select('*, product:products(*)'),
         supabase.from('warehouse_sales').select('id').gte('created_at', today.toISOString()),
         supabase.from('scrap_entries').select('scrap_value, status, quantity'),
@@ -207,6 +226,9 @@ export default function Dashboard() {
         totalStock,
         lowStockCount: lowStock.length,
         inProgressTickets: inProgressRes.data?.length || inProgressRes.count || 0,
+        homeOpenRequests: homeOpenRes.data?.length || homeOpenRes.count || 0,
+        homeInProgressRequests: homeInProgressRes.data?.length || homeInProgressRes.count || 0,
+        homeClosedToday: homeClosedTodayRes.data?.length || homeClosedTodayRes.count || 0,
         todaySalesCount: todayUnitsSold,
         todaySalesRevenue,
         scrapInCount,
@@ -225,6 +247,9 @@ export default function Dashboard() {
       setLoading(false);
     }
   };
+
+  // Fallback polling (helps when realtime is delayed or client missed an event)
+  usePollingRefresh(fetchDashboardData, 30000);
 
   if (loading) {
     return (
@@ -246,11 +271,11 @@ export default function Dashboard() {
 
   const salesHasValues = salesTrend.some((entry: any) => entry.Units > 0);
 
-  const ticketData = [
-    { name: 'Active', value: stats.openTickets, color: '#F59E0B' },
-    { name: 'In Progress', value: stats.inProgressTickets, color: '#4F8CFF' },
-    { name: 'Resolved', value: stats.closedToday, color: '#22C55E' }
-  ].filter(d => d.value > 0);
+  const ticketSplitData = [
+    { name: 'OPEN', in_shop: stats.openTickets, home: stats.homeOpenRequests },
+    { name: 'IN_PROGRESS', in_shop: stats.inProgressTickets, home: stats.homeInProgressRequests },
+    { name: 'CLOSED_TODAY', in_shop: stats.closedToday, home: stats.homeClosedToday },
+  ];
 
   const stockMoveData = [
     { name: 'Stock In', value: stats.todayStockIn },
@@ -261,8 +286,12 @@ export default function Dashboard() {
     if (active && payload && payload.length) {
       return (
         <div className="bg-slate-50 dark:bg-[#0B0F19]/90 border border-slate-200 dark:border-white/10 p-3 rounded-lg shadow-xl backdrop-blur-md">
-          <p className="text-slate-900 dark:text-white text-xs font-bold">{payload[0].name}</p>
-          <p className="text-[#4F8CFF] text-sm font-bold mt-1">{payload[0].value}</p>
+          <p className="text-slate-900 dark:text-white text-xs font-bold">{payload[0].payload?.name}</p>
+          {payload.map((p: any) => (
+            <p key={p.dataKey} className="text-sm font-bold mt-1" style={{ color: p.color }}>
+              {p.name}: {p.value}
+            </p>
+          ))}
         </div>
       );
     }
@@ -339,8 +368,9 @@ export default function Dashboard() {
               <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Total Units</p>
             </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
-            {['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF'].map((cat) => {
+          <div className="overflow-x-auto pb-2 styled-scrollbar">
+            <div className="flex min-w-max gap-3">
+            {['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF', 'Spares'].map((cat) => {
               const count = stats.categoryStock[cat] || 0;
               const maxCount = Math.max(...Object.values(stats.categoryStock), 1);
               const pct = Math.round((count / maxCount) * 100);
@@ -352,10 +382,11 @@ export default function Dashboard() {
                 'Solar Panel': { bg: 'bg-orange-500/10', text: 'text-orange-400', bar: 'bg-orange-500', icon: '☀️' },
                 'Charger': { bg: 'bg-rose-500/10', text: 'text-rose-400', bar: 'bg-rose-500', icon: '🔌' },
                 'SMF': { bg: 'bg-cyan-500/10', text: 'text-cyan-400', bar: 'bg-cyan-500', icon: '📦' },
+                'Spares': { bg: 'bg-slate-500/10', text: 'text-slate-300 dark:text-slate-200', bar: 'bg-slate-400', icon: 'SP' },
               };
               const style = catColors[cat] || { bg: 'bg-slate-500/10', text: 'text-slate-400', bar: 'bg-slate-500', icon: '📦' };
               return (
-                <div key={cat} className={`${style.bg} rounded-xl p-4 flex flex-col gap-2 border border-white/5 hover:scale-[1.02] transition-transform duration-200`}>
+                <div key={cat} className={`${style.bg} min-w-[185px] shrink-0 rounded-xl p-4 flex flex-col gap-2 border border-white/5 hover:scale-[1.02] transition-transform duration-200`}>
                   <div className="flex items-center justify-between">
                     <span className="text-lg">{style.icon}</span>
                     <span className={`text-[10px] font-bold uppercase tracking-wider ${style.text}`}>{cat}</span>
@@ -368,6 +399,7 @@ export default function Dashboard() {
                 </div>
               );
             })}
+            </div>
           </div>
         </div>
 
@@ -417,44 +449,59 @@ export default function Dashboard() {
           </div>
 
           {/* Tickets Overview Bar - moved second */}
-          <div className="glass-card rounded-2xl p-6 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 shadow-md flex flex-col min-h-[300px] hover:-translate-y-1 hover:shadow-xl hover:border-[#4F8CFF]/50 transition-all duration-150 ease-out group gpu-smooth">
+          <div className="glass-card rounded-2xl p-6 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 shadow-md flex flex-col min-h-[320px] hover:-translate-y-1 hover:shadow-xl hover:border-[#4F8CFF]/50 transition-all duration-150 ease-out group gpu-smooth">
             <div className="w-full mb-4">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-wide flex items-center gap-2"><Wrench className="w-4 h-4 text-[#4F8CFF]" /> Ticket Status Distribution</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Active, resolved, and in-progress volume</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">In-Shop vs Home Service breakdown</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4 max-h-24 overflow-y-auto pr-1 styled-scrollbar">
               <div className="flex items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-[12px] font-semibold text-amber-500">
                 <span className="h-2 w-2 rounded-full bg-amber-500" />
-                Active {stats.openTickets}
+                In-Shop OPEN {stats.openTickets}
               </div>
               <div className="flex items-center gap-2 rounded-full border border-[#4F8CFF]/20 bg-[#4F8CFF]/10 px-3 py-1 text-[12px] font-semibold text-[#4F8CFF]">
                 <span className="h-2 w-2 rounded-full bg-[#4F8CFF]" />
-                In-Progress {stats.inProgressTickets}
+                In-Shop IN_PROGRESS {stats.inProgressTickets}
               </div>
               <div className="flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[12px] font-semibold text-emerald-400">
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                Resolved {stats.closedToday}
+                In-Shop CLOSED today {stats.closedToday}
+              </div>
+              <div className="flex items-center gap-2 rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1 text-[12px] font-semibold text-violet-400">
+                <span className="h-2 w-2 rounded-full bg-violet-500" />
+                Home OPEN {stats.homeOpenRequests}
+              </div>
+              <div className="flex items-center gap-2 rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1 text-[12px] font-semibold text-sky-400">
+                <span className="h-2 w-2 rounded-full bg-sky-500" />
+                Home IN_PROGRESS {stats.homeInProgressRequests}
+              </div>
+              <div className="flex items-center gap-2 rounded-full border border-teal-500/20 bg-teal-500/10 px-3 py-1 text-[12px] font-semibold text-teal-400">
+                <span className="h-2 w-2 rounded-full bg-teal-500" />
+                Home CLOSED today {stats.homeClosedToday}
               </div>
             </div>
             <div className="w-full h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={ticketData.length ? ticketData : [{ name: 'No Data', value: 0 }]} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <BarChart data={ticketSplitData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="name" tick={{ fill: '#94A3B8', fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fill: '#94A3B8', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => (v === 'CLOSED_TODAY' ? 'CLOSED (Today)' : v.replace('_', ' '))}
+                  />
                   <YAxis hide />
                   <RechartsTooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.02)' }} />
-                  <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                    {ticketData.length ? ticketData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    )) : <Cell fill="#4F8CFF" />}
-                  </Bar>
+                  <Bar dataKey="in_shop" name="In-Shop" fill="#4F8CFF" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="home" name="Home" fill="#8B5CF6" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
 
           {/* Stock Movement */}
-          <div className="glass-card rounded-2xl p-6 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 shadow-md flex flex-col min-h-[300px] hover:-translate-y-1 hover:shadow-xl hover:border-[#4F8CFF]/50 transition-all duration-150 ease-out group gpu-smooth">
+          <div className="glass-card rounded-2xl p-6 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 shadow-md flex flex-col min-h-[320px] hover:-translate-y-1 hover:shadow-xl hover:border-[#4F8CFF]/50 transition-all duration-150 ease-out group gpu-smooth">
             <div className="w-full mb-6">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-wide">Stock Movement</h3>
               <p className="text-xs text-slate-600 dark:text-slate-500 dark:text-slate-400">Total units moved today</p>
@@ -484,6 +531,11 @@ export default function Dashboard() {
         <div className="grid gap-6 lg:grid-cols-2 mt-4">
           <RecentTickets tickets={recentTickets} />
           <LowStockAlert items={lowStockItems} />
+        </div>
+
+        {/* SLA Tracking Dashboard */}
+        <div className="mt-8">
+          <SLATracking />
         </div>
       </div>
     </AppLayout>

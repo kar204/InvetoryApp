@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { Plus, Minus, Search, Package, ArrowUpCircle, ArrowDownCircle, Download, Trash2, X, Upload, ShoppingCart, AlertTriangle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,6 +15,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Product, WarehouseStock, TransactionType, StockSource } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
+import { usePollingRefresh } from '@/hooks/usePollingRefresh';
 import { Badge } from '@/components/ui/badge';
 import { downloadCSV, formatStockForExport } from '@/utils/exportUtils';
 import * as XLSX from 'xlsx';
@@ -29,6 +31,7 @@ import {
 } from '@/components/ui/alert-dialog';
 
 export default function Inventory() {
+  const location = useLocation();
   const { user, hasRole, hasAnyRole } = useAuth();
   const { toast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
@@ -82,6 +85,13 @@ export default function Inventory() {
   const isProcurementStaff = hasRole('procurement_staff');
   const isAdmin = hasRole('admin');
 
+  // Deep-link support: /inventory?q=...
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const q = (params.get('q') || '').trim();
+    if (q) setSearch(q);
+  }, [location.search]);
+
   useEffect(() => {
     fetchData();
     fetchSales();
@@ -115,6 +125,13 @@ export default function Inventory() {
       transactionsChannel.unsubscribe();
     };
   }, []);
+
+  // Fallback polling (helps when realtime is delayed or client missed an event)
+  usePollingRefresh(() => {
+    fetchData();
+    fetchSales();
+    fetchStockTransactions();
+  }, 30000);
 
   const fetchProfiles = async () => {
     try {
@@ -775,6 +792,7 @@ export default function Inventory() {
                           <SelectItem value="Solar Panel">Solar Panel</SelectItem>
                           <SelectItem value="Charger">Charger</SelectItem>
                           <SelectItem value="SMF">SMF</SelectItem>
+                          <SelectItem value="Spares">Spares</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -1169,11 +1187,12 @@ export default function Inventory() {
                 <TabsTrigger value="all" className="rounded-full border data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                   All ({filteredStock.length})
                 </TabsTrigger>
-                {['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF'].map(cat => {
+                {['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF', 'Spares'].map(cat => {
                   const count = filterByCategory(cat).length;
+                  const label = cat === 'Spares' ? 'Spares' : `${cat}s`;
                   return (
                     <TabsTrigger key={cat} value={cat} className="rounded-full border data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                      {cat}s ({count})
+                      {label} ({count})
                     </TabsTrigger>
                   );
                 })}
@@ -1190,7 +1209,7 @@ export default function Inventory() {
                   {renderStockTable(filteredStock)}
                 </TabsContent>
 
-                {['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF'].map(cat => (
+                {['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF', 'Spares'].map(cat => (
                   <TabsContent key={cat} value={cat} className="m-0">
                     <div className="p-4 bg-muted/30 border-b">
                       <h2 className="font-semibold flex items-center gap-2">

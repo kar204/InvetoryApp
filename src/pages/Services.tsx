@@ -1,22 +1,28 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { Plus, Search, Filter, Download, Trash2, Phone, Battery, Zap, Wrench, ChevronRight } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { supabase } from '@/integrations/supabase/client';
-import { ServiceTicket, ServiceStatus, Profile, UserRole } from '@/types/database';
+import { ServiceTicket, ServiceStatus, Profile, UserRole, HomeServiceRequest } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
+import { usePollingRefresh } from '@/hooks/usePollingRefresh';
 import { formatDistanceToNow } from 'date-fns';
 import { PrintTicket } from '@/components/PrintTicket';
 import { downloadCSV, formatTicketForExport } from '@/utils/exportUtils';
+import { HomeServiceForm } from '@/components/services/HomeServiceForm';
+import { HomeServiceList } from '@/components/services/HomeServiceList';
+import { HomeServiceResolutionForm } from '@/components/services/HomeServiceResolutionForm';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,19 +41,381 @@ const statusColors: Record<string, string> = {
   CLOSED: 'bg-slate-500/10 text-slate-600 dark:text-slate-500 border-slate-500/20',
 };
 
+// NOTE:
+// These Home Service views must live at module scope.
+// If defined inside the Services component, they get recreated on every render,
+// which makes React unmount/remount them and causes dialogs/forms to close mid-action.
+type HomeServiceAdminViewProps = {
+  homeSearch: string;
+  onRefresh: () => void;
+  externalRefreshTrigger?: number;
+};
+
+function HomeServiceAdminView({ homeSearch, onRefresh, externalRefreshTrigger = 0 }: HomeServiceAdminViewProps) {
+  const { toast } = useToast();
+  const [selectedRequest, setSelectedRequest] = useState<HomeServiceRequest | null>(null);
+  const [technicians, setTechnicians] = useState<Profile[]>([]);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [deleting, setDeleting] = useState(false);
+  const [showResolutionForm, setShowResolutionForm] = useState(false);
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const { data, error: rolesError } = await supabase
+          .from('user_roles')
+          .select('user_id')
+          .eq('role', 'service_technician');
+
+        if (rolesError) {
+          console.error('Error fetching technician roles:', rolesError);
+          return;
+        }
+
+        const technicianIds = (data || []).map((r: { user_id: string }) => r.user_id);
+
+        if (technicianIds.length === 0) {
+          console.warn('No service_technician roles found in database');
+          setTechnicians([]);
+          return;
+        }
+
+        const { data: profilesData, error: profilesError } = await supabase
+          .from('profiles')
+          .select('*')
+          .in('user_id', technicianIds);
+
+        if (profilesError) {
+          console.error('Error fetching technician profiles:', profilesError);
+          return;
+        }
+
+        setTechnicians((profilesData as Profile[]) || []);
+      } catch (error) {
+        console.error('Error fetching technicians:', error);
+      }
+    };
+
+    run();
+  }, []);
+
+  const handleAssignTechnician = async (requestId: string, technicianId: string) => {
+    try {
+      const { error } = await supabase
+        .from('home_service_requests')
+        .update({ assigned_to: technicianId, assigned_at: new Date().toISOString(), status: 'IN_PROGRESS' })
+        .eq('id', requestId);
+
+      if (error) throw error;
+
+      toast({ title: 'Technician assigned successfully' });
+      setSelectedRequest(null);
+      setRefreshTrigger((prev) => prev + 1);
+      onRefresh();
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      toast({ title: 'Error assigning', description: errorMessage, variant: 'destructive' });
+    }
+  };
+
+  const handleDeleteRequest = async (request: HomeServiceRequest) => {
+    try {
+      setDeleting(true);
+      // With RLS, a DELETE can "succeed" with 0 affected rows (no error).
+      // Request the deleted row back so we can detect no-op deletes.
+      const { data, error } = await supabase.from('home_service_requests').delete().eq('id', request.id).select('id');
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        toast({
+          title: 'Not deleted',
+          description: 'No rows were deleted (permission denied or record not found).',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      toast({ title: 'Request deleted' });
+      setSelectedRequest(null);
+      setRefreshTrigger((prev) => prev + 1);
+      onRefresh();
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      toast({ title: 'Error deleting', description: errorMessage, variant: 'destructive' });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <HomeServiceList
+        viewMode="service_desk"
+        onSelectRequest={setSelectedRequest}
+        refreshTrigger={refreshTrigger + externalRefreshTrigger}
+        initialSearch={homeSearch}
+      />
+
+      <Dialog open={!!selectedRequest && !showResolutionForm} onOpenChange={() => setSelectedRequest(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Service Request Details</DialogTitle>
+          </DialogHeader>
+          {selectedRequest && (
+            <div className="space-y-4">
+              <div className="grid gap-3 text-sm">
+                <div>
+                  <span className="text-muted-foreground">Customer:</span>
+                  <p className="font-semibold">{selectedRequest.customer_name}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Phone:</span>
+                  <p className="font-semibold">{selectedRequest.customer_phone}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Address:</span>
+                  <p className="font-semibold">{selectedRequest.address}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Status:</span>
+                  <p className="font-semibold">{selectedRequest.status}</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm">Assign Service Technician</Label>
+                {technicians.length === 0 ? (
+                  <div className="bg-amber-50 dark:bg-amber-950/20 p-3 rounded-lg border border-amber-200 dark:border-amber-800/50">
+                    <p className="text-sm text-amber-800 dark:text-amber-200">
+                      Warning: No service technicians available. Please assign a service_technician role to a user first.
+                    </p>
+                  </div>
+                ) : (
+                  <Select onValueChange={(techId) => handleAssignTechnician(selectedRequest.id, techId)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a technician" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {technicians.map((tech) => (
+                        <SelectItem key={tech.user_id} value={tech.user_id}>
+                          {tech.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2 pt-2">
+                <Button onClick={() => setShowResolutionForm(true)} className="w-full" disabled={selectedRequest.status === 'CLOSED'}>
+                  Resolve & Close
+                </Button>
+                <Button type="button" variant="destructive" onClick={() => handleDeleteRequest(selectedRequest)} disabled={deleting}>
+                  {deleting ? 'Deleting...' : 'Delete Request'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <HomeServiceResolutionForm
+        request={selectedRequest}
+        isOpen={!!selectedRequest && showResolutionForm}
+        onClose={() => setShowResolutionForm(false)}
+        onResolved={() => {
+          setShowResolutionForm(false);
+          setSelectedRequest(null);
+          setRefreshTrigger((prev) => prev + 1);
+          onRefresh();
+        }}
+      />
+    </div>
+  );
+}
+
+type HomeServiceCounterStaffViewProps = {
+  homeSearch: string;
+  externalRefreshTrigger?: number;
+};
+
+function HomeServiceCounterStaffView({ homeSearch, externalRefreshTrigger = 0 }: HomeServiceCounterStaffViewProps) {
+  const [selectedRequest, setSelectedRequest] = useState<HomeServiceRequest | null>(null);
+  const [assignedTechnicianName, setAssignedTechnicianName] = useState<string>('');
+
+  useEffect(() => {
+    const assignedId = selectedRequest?.assigned_to;
+    if (!assignedId) {
+      setAssignedTechnicianName('');
+      return;
+    }
+
+    supabase
+      .from('profiles')
+      .select('name')
+      .eq('user_id', assignedId)
+      .maybeSingle()
+      .then(({ data }) => setAssignedTechnicianName(data?.name ?? 'Technician'))
+      .catch(() => setAssignedTechnicianName('Technician'));
+  }, [selectedRequest?.assigned_to]);
+
+  return (
+    <div className="space-y-4">
+      <HomeServiceList
+        viewMode="counter_staff"
+        onSelectRequest={setSelectedRequest}
+        initialSearch={homeSearch}
+        refreshTrigger={externalRefreshTrigger}
+      />
+
+      <Dialog open={!!selectedRequest} onOpenChange={() => setSelectedRequest(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Service Request Details</DialogTitle>
+          </DialogHeader>
+          {selectedRequest && (
+            <div className="space-y-4">
+              <div className="grid gap-3 text-sm">
+                <div>
+                  <span className="text-muted-foreground">Customer:</span>
+                  <p className="font-semibold">{selectedRequest.customer_name}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Phone:</span>
+                  <p className="font-semibold">{selectedRequest.customer_phone}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Address:</span>
+                  <p className="font-semibold">{selectedRequest.address}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Status:</span>
+                  <p className="font-semibold">{selectedRequest.status}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Assigned:</span>
+                  <p className="font-semibold">{selectedRequest.assigned_to ? assignedTechnicianName : 'Not yet'}</p>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button type="button" variant="outline" onClick={() => setSelectedRequest(null)}>
+                  Close
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+type HomeServiceTechnicianViewProps = {
+  homeSearch: string;
+  onRefresh: () => void;
+  externalRefreshTrigger?: number;
+};
+
+function HomeServiceTechnicianView({ homeSearch, onRefresh, externalRefreshTrigger = 0 }: HomeServiceTechnicianViewProps) {
+  const [selectedRequest, setSelectedRequest] = useState<HomeServiceRequest | null>(null);
+  const [showResolutionForm, setShowResolutionForm] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  return (
+    <div className="space-y-4">
+      <HomeServiceList
+        viewMode="technician"
+        onSelectRequest={setSelectedRequest}
+        refreshTrigger={refreshTrigger + externalRefreshTrigger}
+        initialSearch={homeSearch}
+      />
+
+      <Dialog open={!!selectedRequest && !showResolutionForm} onOpenChange={() => setSelectedRequest(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Service Request Details</DialogTitle>
+          </DialogHeader>
+          {selectedRequest && (
+            <div className="space-y-4">
+              <div className="grid gap-3 text-sm">
+                <div>
+                  <span className="text-muted-foreground">Customer:</span>
+                  <p className="font-semibold">{selectedRequest.customer_name}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Phone:</span>
+                  <p className="font-semibold">{selectedRequest.customer_phone}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Address:</span>
+                  <p className="font-semibold">{selectedRequest.address}</p>
+                </div>
+                {selectedRequest.battery_model && (
+                  <div>
+                    <span className="text-muted-foreground">Battery Model:</span>
+                    <p className="font-semibold">{selectedRequest.battery_model}</p>
+                  </div>
+                )}
+                {selectedRequest.inverter_model && (
+                  <div>
+                    <span className="text-muted-foreground">Inverter Model:</span>
+                    <p className="font-semibold">{selectedRequest.inverter_model}</p>
+                  </div>
+                )}
+                <div>
+                  <span className="text-muted-foreground">Issue Description:</span>
+                  <p className="font-semibold">{selectedRequest.issue_description}</p>
+                </div>
+              </div>
+
+              <Button onClick={() => setShowResolutionForm(true)} className="w-full" disabled={selectedRequest.status === 'CLOSED'}>
+                Resolve & Close
+              </Button>
+              {selectedRequest.status === 'CLOSED' && (
+                <p className="text-sm text-muted-foreground">This request is already closed.</p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <HomeServiceResolutionForm
+        request={selectedRequest}
+        isOpen={showResolutionForm}
+        onClose={() => {
+          setShowResolutionForm(false);
+          setSelectedRequest(null);
+        }}
+        onResolved={() => {
+          setShowResolutionForm(false);
+          setSelectedRequest(null);
+          setRefreshTrigger((prev) => prev + 1);
+          onRefresh();
+        }}
+      />
+    </div>
+  );
+}
+
 export default function Services() {
+  const location = useLocation();
   const { user, hasRole, hasAnyRole } = useAuth();
   const { toast } = useToast();
+  const isServiceTechnician = hasRole('service_technician');
   const [tickets, setTickets] = useState<ServiceTicket[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [spBatteryAgents, setSpBatteryAgents] = useState<string[]>([]);
   const [spInvertorAgents, setSpInvertorAgents] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [homeSearch, setHomeSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState<ServiceTicket | null>(null);
   const [ticketToDelete, setTicketToDelete] = useState<ServiceTicket | null>(null);
+  const [homeServiceRefreshTrigger, setHomeServiceRefreshTrigger] = useState(0);
+  const [activeTab, setActiveTab] = useState<'in-shop' | 'home-service'>(isServiceTechnician ? 'home-service' : 'in-shop');
 
   // Battery resolution state
   const [ticketToResolveBattery, setTicketToResolveBattery] = useState<ServiceTicket | null>(null);
@@ -102,6 +470,23 @@ export default function Services() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]);
 
+  // Deep-link support: /services?tab=in-shop&q=... or /services?tab=home-service&q=...
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tabParam = params.get('tab');
+    const qParam = (params.get('q') || '').trim();
+
+    const normalizedTab = tabParam === 'in-shop' || tabParam === 'home-service' ? tabParam : null;
+
+    if (!isServiceTechnician && normalizedTab) {
+      setActiveTab(normalizedTab);
+    }
+
+    const effectiveTab = normalizedTab ?? (isServiceTechnician ? 'home-service' : 'in-shop');
+    if (effectiveTab === 'in-shop') setSearch(qParam);
+    else setHomeSearch(qParam);
+  }, [location.search, isServiceTechnician]);
+
   const fetchTickets = async () => {
     try {
       let query = supabase
@@ -123,6 +508,9 @@ export default function Services() {
       setLoading(false);
     }
   };
+
+  // Fallback polling (helps multi-user environments if realtime events are missed)
+  usePollingRefresh(fetchTickets, 30000);
 
   const fetchProfiles = async () => {
     const { data } = await supabase.from('profiles').select('*');
@@ -339,7 +727,7 @@ export default function Services() {
 
       await supabase.from('service_logs').insert({
         ticket_id: ticketToResolveBattery.id,
-        action: `Battery resolved - Rechargeable: ${batteryRechargeable}, Price: ₹${priceNumber}`,
+        action: `Battery resolved - Rechargeable: ${batteryRechargeable}, Price: Rs. ${priceNumber}`,
         user_id: user.id,
       });
 
@@ -400,7 +788,7 @@ export default function Services() {
 
       await supabase.from('service_logs').insert({
         ticket_id: ticketToResolveInvertor.id,
-        action: `Invertor resolved - Resolved: ${invertorResolved}, Price: ₹${priceNumber}`,
+        action: `Invertor resolved - Resolved: ${invertorResolved}, Price: Rs. ${priceNumber}`,
         notes: invertorIssueDescription || null,
         user_id: user.id,
       });
@@ -471,7 +859,7 @@ export default function Services() {
     const data = filteredTickets.map(ticket =>
       formatTicketForExport(ticket, getProfileName(ticket.assigned_to))
     );
-    downloadCSV(data, `service-tickets-${new Date().toISOString().split('T')[0]}`);
+  downloadCSV(data, `service-tickets-${new Date().toISOString().split('T')[0]}`);
   };
 
   // Role-based access checks (must be before filteredTickets)
@@ -546,7 +934,19 @@ export default function Services() {
 
   return (
     <AppLayout>
-      <div className="space-y-6 relative min-h-[80vh] pb-24">
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => setActiveTab(v as 'in-shop' | 'home-service')}
+        className="w-full space-y-6"
+      >
+        <TabsList className={`grid w-full max-w-md ${isServiceTechnician ? 'grid-cols-1' : 'grid-cols-2'}`}>
+          {!isServiceTechnician && <TabsTrigger value="in-shop">In-Shop Service</TabsTrigger>}
+          <TabsTrigger value="home-service">Home Service</TabsTrigger>
+        </TabsList>
+
+        {/* IN-SHOP SERVICE TAB */}
+        {!isServiceTechnician && (
+          <TabsContent value="in-shop" className="space-y-6 relative min-h-[80vh] pb-24">
         {/* Floating New Ticket Button */}
         {canCreateTicket && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -756,7 +1156,7 @@ export default function Services() {
                       </span>
                       {ticket.status === 'RESOLVED' && (
                         <span className="font-bold text-emerald-400 tracking-wide drop-shadow-[0_0_8px_rgba(34,197,94,0.3)]">
-                          ₹{(ticket.battery_price || 0) + (ticket.invertor_price || 0)}
+                          Rs. {(ticket.battery_price || 0) + (ticket.invertor_price || 0)}
                         </span>
                       )}
                     </div>
@@ -831,7 +1231,7 @@ export default function Services() {
                   <div className="p-4 rounded-lg bg-muted/50 space-y-2">
                     <h4 className="font-semibold">Battery Resolution</h4>
                     <p>Rechargeable: {selectedTicket.battery_rechargeable ? 'Yes' : 'No'}</p>
-                    <p>Price: ₹{(selectedTicket.battery_price || 0).toFixed(2)}</p>
+                    <p>Price: Rs. {(selectedTicket.battery_price || 0).toFixed(2)}</p>
                   </div>
                 )}
 
@@ -842,7 +1242,7 @@ export default function Services() {
                     {selectedTicket.invertor_issue_description && (
                       <p>Issue: {selectedTicket.invertor_issue_description}</p>
                     )}
-                    <p>Price: ₹{(selectedTicket.invertor_price || 0).toFixed(2)}</p>
+                    <p>Price: Rs. {(selectedTicket.invertor_price || 0).toFixed(2)}</p>
                   </div>
                 )}
 
@@ -850,7 +1250,7 @@ export default function Services() {
                 {(selectedTicket.battery_resolved || selectedTicket.invertor_resolved) && (
                   <div className="p-4 rounded-lg bg-primary/10 border border-primary/20">
                     <p className="font-semibold text-lg">
-                      Total Service Price: ₹{getTotalPrice(selectedTicket).toFixed(2)}
+                      Total Service Price: Rs. {getTotalPrice(selectedTicket).toFixed(2)}
                     </p>
                   </div>
                 )}
@@ -1001,7 +1401,7 @@ export default function Services() {
                 </RadioGroup>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="battery_price">Price (₹)</Label>
+                <Label htmlFor="battery_price">Price (Rs.)</Label>
                 <Input
                   id="battery_price"
                   type="number"
@@ -1064,7 +1464,7 @@ export default function Services() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="invertor_price">Price (₹)</Label>
+                <Label htmlFor="invertor_price">Price (Rs.)</Label>
                 <Input
                   id="invertor_price"
                   type="number"
@@ -1102,12 +1502,12 @@ export default function Services() {
             {ticketToClose && (
               <form onSubmit={handleCloseSubmit} className="space-y-4">
                 <div className="p-4 rounded-lg bg-muted/50">
-                  <p className="text-lg font-semibold">Total Amount: ₹{getTotalPrice(ticketToClose).toFixed(2)}</p>
+                  <p className="text-lg font-semibold">Total Amount: Rs. {getTotalPrice(ticketToClose).toFixed(2)}</p>
                   {ticketToClose.battery_price !== null && (
-                    <p className="text-sm text-muted-foreground">Battery: ₹{ticketToClose.battery_price.toFixed(2)}</p>
+                    <p className="text-sm text-muted-foreground">Battery: Rs. {ticketToClose.battery_price.toFixed(2)}</p>
                   )}
                   {ticketToClose.invertor_price !== null && (
-                    <p className="text-sm text-muted-foreground">Invertor: ₹{ticketToClose.invertor_price.toFixed(2)}</p>
+                    <p className="text-sm text-muted-foreground">Invertor: Rs. {ticketToClose.invertor_price.toFixed(2)}</p>
                   )}
                 </div>
                 <div className="space-y-2">
@@ -1218,7 +1618,43 @@ export default function Services() {
             )}
           </DialogContent>
         </Dialog>
-      </div>
+        </TabsContent>
+        )}
+
+        {/* HOME SERVICE TAB */}
+        <TabsContent value="home-service" className="space-y-6">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-2xl font-bold">Home Service Requests</h2>
+              <p className="text-sm text-muted-foreground">Manage home and office battery/inverter services</p>
+            </div>
+            {(hasRole('counter_staff') || hasRole('admin')) && (
+              <HomeServiceForm onRequestCreated={() => setHomeServiceRefreshTrigger(prev => prev + 1)} />
+            )}
+          </div>
+
+          {hasRole('service_technician') ? (
+            <HomeServiceTechnicianView
+              homeSearch={homeSearch}
+              onRefresh={() => setHomeServiceRefreshTrigger((prev) => prev + 1)}
+              externalRefreshTrigger={homeServiceRefreshTrigger}
+            />
+          ) : hasRole('admin') ? (
+            <HomeServiceAdminView
+              homeSearch={homeSearch}
+              onRefresh={() => setHomeServiceRefreshTrigger((prev) => prev + 1)}
+              externalRefreshTrigger={homeServiceRefreshTrigger}
+            />
+          ) : hasRole('counter_staff') ? (
+            <HomeServiceCounterStaffView
+              homeSearch={homeSearch}
+              externalRefreshTrigger={homeServiceRefreshTrigger}
+            />
+          ) : (
+            <div className="text-sm text-muted-foreground">You do not have access to Home Service.</div>
+          )}
+        </TabsContent>
+      </Tabs>
     </AppLayout>
   );
 }
