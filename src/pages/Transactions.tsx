@@ -71,6 +71,8 @@ export default function Transactions() {
   const [refreshing, setRefreshing] = useState(false);
   const [deletingSaleId, setDeletingSaleId] = useState<string | null>(null);
   const [saleToDelete, setSaleToDelete] = useState<SaleRecord | null>(null);
+  const [transactionToDelete, setTransactionToDelete] = useState<StockTransaction | null>(null);
+  const [deletingTransactionId, setDeletingTransactionId] = useState<string | null>(null);
 
   const isAdmin = hasRole('admin');
 
@@ -187,6 +189,54 @@ export default function Transactions() {
     const searchTerms = searchLower.split(/\s+/);
     return searchTerms.every(term => combined.includes(term));
   });
+
+  // Handle delete Stock In transaction
+  const handleDeleteTransaction = async () => {
+    if (!transactionToDelete || deletingTransactionId || transactionToDelete.transaction_type !== 'IN') return;
+    setDeletingTransactionId(transactionToDelete.id);
+
+    try {
+      // Get current stock
+      const { data: currentStock, error: stockError } = await supabase
+        .from('warehouse_stock')
+        .select('quantity')
+        .eq('product_id', transactionToDelete.product_id)
+        .single();
+
+      if (stockError) throw stockError;
+
+      // Calculate new quantity (subtract the previously added stock)
+      const newQuantity = (currentStock?.quantity || 0) - transactionToDelete.quantity;
+      if (newQuantity < 0) {
+        throw new Error('Cannot revert. Removing this stock in would result in negative quantity.');
+      }
+
+      // Update stock
+      const { error: updateError } = await supabase
+        .from('warehouse_stock')
+        .update({ quantity: newQuantity })
+        .eq('product_id', transactionToDelete.product_id);
+
+      if (updateError) throw updateError;
+
+      // Delete the transaction record
+      const { error: deleteError } = await supabase
+        .from('stock_transactions')
+        .delete()
+        .eq('id', transactionToDelete.id);
+
+      if (deleteError) throw deleteError;
+
+      toast({ title: 'Transaction reverted successfully', description: 'Stock has been adjusted' });
+      setTransactionToDelete(null);
+      fetchData();
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      toast({ title: 'Error reverting transaction', description: errorMessage, variant: 'destructive' });
+    } finally {
+      setDeletingTransactionId(null);
+    }
+  };
 
   // Handle delete sale - reverts the sale and restores stock
   const handleDeleteSale = async () => {
@@ -316,7 +366,7 @@ export default function Transactions() {
                         <div className="w-14 sm:w-20 shrink-0 text-right pt-4 relative z-10 pl-0 sm:pl-2">
                           <div className="text-[11px] font-bold text-slate-600 dark:text-slate-500 dark:text-slate-400 uppercase tracking-widest leading-tight">{format(new Date(trans.created_at), 'MMM dd')}</div>
                           <div className="text-[10px] text-slate-600 dark:text-slate-500 font-medium">{format(new Date(trans.created_at), 'HH:mm')}</div>
-                          <div className="absolute right-[-23px] sm:right-[-37px] top-5 w-3 h-3 rounded-full bg-white dark:bg-[#111827] border-2 border-[#4F8CFF] shadow-[0_0_8px_rgba(79,140,255,0.5)] group-hover:scale-[1.7] transition-transform duration-300" />
+                          <div className="absolute right-[-23px] sm:right-[-37px] top-[22px] w-3 h-3 rounded-full bg-white dark:bg-[#111827] border-2 border-[#4F8CFF] shadow-[0_0_8px_rgba(79,140,255,0.5)] group-hover:scale-[1.7] transition-transform duration-300" />
                         </div>
                         <div className="flex-1 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-2xl p-6 hover:-translate-y-1 hover:bg-slate-50 dark:bg-[#151C2F] hover:border-[#4F8CFF]/30 hover:shadow-[0_8px_32px_rgba(0,0,0,0.3)] transition-all duration-300 cursor-pointer">
                           <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
@@ -330,11 +380,27 @@ export default function Transactions() {
                               </div>
                               <p className="text-[13px] text-slate-600 dark:text-slate-500 max-w-lg truncate italic group-hover:text-slate-600 dark:text-slate-500 dark:text-slate-400 transition-colors">"{trans.remarks || 'No remarks provided'}"</p>
                             </div>
-                            <div className="flex flex-col items-end gap-1 shrink-0">
-                              <div className={`text-2xl font-black drop-shadow-md tracking-tight ${qtyColor}`}>
-                                {sign}{trans.quantity}
+                            <div className="flex items-center gap-4">
+                              <div className="flex flex-col items-end gap-1 shrink-0">
+                                <div className={`text-2xl font-black drop-shadow-md tracking-tight ${qtyColor}`}>
+                                  {sign}{trans.quantity}
+                                </div>
+                                <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold max-w-[120px] sm:max-w-none truncate" title={`By ${getProfileName(trans.handled_by)}`}>By {getProfileName(trans.handled_by)}</p>
                               </div>
-                              <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold">By {getProfileName(trans.handled_by)}</p>
+                              {isAdmin && isIn && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 rounded-full text-slate-500 hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTransactionToDelete(trans);
+                                  }}
+                                  title="Revert this transaction"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -358,7 +424,7 @@ export default function Transactions() {
                         <div className="w-14 sm:w-20 shrink-0 text-right pt-4 relative z-10 pl-0 sm:pl-2">
                           <div className="text-[11px] font-bold text-slate-600 dark:text-slate-500 dark:text-slate-400 uppercase tracking-widest leading-tight">{format(new Date(sale.created_at), 'MMM dd')}</div>
                           <div className="text-[10px] text-slate-600 dark:text-slate-500 font-medium">{format(new Date(sale.created_at), 'HH:mm')}</div>
-                          <div className="absolute right-[-23px] sm:right-[-37px] top-5 w-3 h-3 rounded-full bg-white dark:bg-[#111827] border-2 border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] group-hover:scale-[1.7] transition-transform duration-300" />
+                          <div className="absolute right-[-23px] sm:right-[-37px] top-[22px] w-3 h-3 rounded-full bg-white dark:bg-[#111827] border-2 border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] group-hover:scale-[1.7] transition-transform duration-300" />
                         </div>
                         <div className="flex-1 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-2xl p-6 hover:-translate-y-1 hover:bg-slate-50 dark:bg-[#151C2F] hover:border-emerald-500/30 hover:shadow-[0_8px_32px_rgba(0,0,0,0.3)] transition-all duration-300 cursor-pointer">
                           <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
@@ -388,7 +454,7 @@ export default function Transactions() {
                                 <div className="text-sm font-bold text-emerald-500">
                                   ₹{sale.total_amount?.toLocaleString('en-IN')}
                                 </div>
-                                <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold">By {getProfileName(sale.sold_by)}</p>
+                                <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold max-w-[120px] sm:max-w-none truncate" title={`By ${getProfileName(sale.sold_by)}`}>By {getProfileName(sale.sold_by)}</p>
                               </div>
                               {isAdmin && (
                                 <Button
@@ -430,7 +496,7 @@ export default function Transactions() {
                         <div className="w-14 sm:w-20 shrink-0 text-right pt-4 relative z-10 pl-0 sm:pl-2">
                           <div className="text-[11px] font-bold text-slate-600 dark:text-slate-500 dark:text-slate-400 uppercase tracking-widest leading-tight">{format(new Date(row.date), 'MMM dd')}</div>
                           <div className="text-[10px] text-slate-600 dark:text-slate-500 font-medium">{format(new Date(row.date), 'HH:mm')}</div>
-                          <div className={`absolute right-[-23px] sm:right-[-37px] top-5 w-3 h-3 rounded-full border-2 bg-white dark:bg-[#111827] group-hover:scale-[1.7] transition-transform duration-300 ${isIn ? 'border-[#4F8CFF] shadow-[0_0_8px_rgba(79,140,255,0.5)]' : 'border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]'}`} />
+                          <div className={`absolute right-[-23px] sm:right-[-37px] top-[22px] w-3 h-3 rounded-full border-2 bg-white dark:bg-[#111827] group-hover:scale-[1.7] transition-transform duration-300 ${isIn ? 'border-[#4F8CFF] shadow-[0_0_8px_rgba(79,140,255,0.5)]' : 'border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]'}`} />
                         </div>
                         <div className="flex-1 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-2xl p-6 hover:-translate-y-1 hover:bg-slate-50 dark:bg-[#151C2F] hover:border-[#4F8CFF]/30 hover:shadow-[0_8px_32px_rgba(0,0,0,0.3)] transition-all duration-300 cursor-pointer">
                           <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
@@ -455,7 +521,7 @@ export default function Transactions() {
                               </div>
                               <div className="text-right">
                                 <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold mb-1">By</p>
-                                <p className="text-xs font-medium text-slate-700 dark:text-slate-300">{getProfileName(row.recorded_by)}</p>
+                                <p className="text-xs font-medium text-slate-700 dark:text-slate-300 max-w-[100px] sm:max-w-none truncate" title={getProfileName(row.recorded_by)}>{getProfileName(row.recorded_by)}</p>
                               </div>
                             </div>
                           </div>
@@ -469,7 +535,6 @@ export default function Transactions() {
           </Tabs>
         )}
       </div>
-
       {/* Delete Sale Confirmation Dialog */}
       <AlertDialog open={!!saleToDelete} onOpenChange={() => !deletingSaleId && setSaleToDelete(null)}>
         <AlertDialogContent>
@@ -479,7 +544,7 @@ export default function Transactions() {
               This will permanently delete the sale record and restore the stock quantities. 
               This action cannot be undone.
               {saleToDelete && (
-                <div className="mt-2 p-2 bg-muted rounded-md">
+                <div className="mt-2 p-2 bg-muted rounded-md text-sm">
                   <p><strong>Customer:</strong> {saleToDelete.customer_name || 'Walking Customer'}</p>
                   <p><strong>Amount:</strong> ₹{saleToDelete.total_amount?.toLocaleString('en-IN')}</p>
                   <p><strong>Items:</strong> {saleToDelete.items?.length || 0} product(s)</p>
@@ -488,13 +553,42 @@ export default function Transactions() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deletingSaleId}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={!!deletingSaleId}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteSale}
-              disabled={deletingSaleId}
+              disabled={!!deletingSaleId}
               className="bg-red-500 hover:bg-red-600 text-white"
             >
               {deletingSaleId ? 'Reverting...' : 'Yes, Revert Sale'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Transaction Confirmation Dialog */}
+      <AlertDialog open={!!transactionToDelete} onOpenChange={() => !deletingTransactionId && setTransactionToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revert This Stock In?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this record and reduce the warehouse stock quantity.
+              This action cannot be undone.
+              {transactionToDelete && (
+                <div className="mt-2 p-2 bg-muted rounded-md text-sm">
+                  <p><strong>Product:</strong> {transactionToDelete.product?.name || 'Unknown'}</p>
+                  <p><strong>Quantity:</strong> {transactionToDelete.quantity}</p>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!deletingTransactionId}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteTransaction}
+              disabled={!!deletingTransactionId}
+              className="bg-red-500 hover:bg-red-600 text-white"
+            >
+              {deletingTransactionId ? 'Reverting...' : 'Yes, Revert'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

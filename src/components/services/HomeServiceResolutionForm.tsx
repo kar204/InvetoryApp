@@ -48,7 +48,8 @@ export function HomeServiceResolutionForm({
     if (!request || !user) return;
 
     // Validation
-    if (!batteryResolved && !inverterResolved) {
+    const hasTrackedProduct = Boolean(request.battery_model || request.inverter_model);
+    if (hasTrackedProduct && !batteryResolved && !inverterResolved) {
       toast({
         title: 'Validation Error',
         description: 'Please resolve at least one item (Battery or Inverter).',
@@ -57,18 +58,20 @@ export function HomeServiceResolutionForm({
       return;
     }
 
-    // If any item is resolved, require payment details
-    const anyResolved = batteryResolved === 'yes' || inverterResolved === 'yes';
-    if (anyResolved && (!paymentMethod || !totalAmount)) {
+	    // If any item is resolved, require payment details
+	    const anyResolved = batteryResolved === 'yes' || inverterResolved === 'yes';
+	    if (anyResolved && (!paymentMethod || !totalAmount)) {
       toast({
         title: 'Validation Error',
         description: 'Please fill payment method and amount for resolved items.',
         variant: 'destructive',
       });
-      return;
-    }
+	      return;
+	    }
 
-    setLoading(true);
+	    const resolvedPaymentMethod = anyResolved ? (paymentMethod as 'CASH' | 'CARD' | 'UPI') : null;
+
+	    setLoading(true);
 
     try {
       // Prevent duplicate resolution attempts (request_id is UNIQUE in the DB)
@@ -98,11 +101,11 @@ export function HomeServiceResolutionForm({
           request_id: request.id,
           battery_resolved: request.battery_model ? batteryResolved === 'yes' : null,
           battery_resolution_notes: batteryResolved ? batteryResolutionNotes : null,
-          inverter_resolved: request.inverter_model ? inverterResolved === 'yes' : null,
-          inverter_resolution_notes: inverterResolved ? inverterResolutionNotes : null,
-          total_amount: anyResolved ? parseFloat(totalAmount) : null,
-          payment_method: anyResolved ? paymentMethod : null,
-          resolved_by: user.id,
+	          inverter_resolved: request.inverter_model ? inverterResolved === 'yes' : null,
+	          inverter_resolution_notes: inverterResolved ? inverterResolutionNotes : null,
+	          total_amount: anyResolved ? parseFloat(totalAmount) : null,
+	          payment_method: resolvedPaymentMethod,
+	          resolved_by: user.id,
           resolved_at: new Date().toISOString(),
           closed_by: user.id,
           closed_at: new Date().toISOString(),
@@ -182,6 +185,12 @@ export function HomeServiceResolutionForm({
                   <div>
                     <div className="text-muted-foreground">Inverter Model</div>
                     <div className="font-semibold">{request.inverter_model}</div>
+                  </div>
+                )}
+                {request.spare_supplied && (
+                  <div>
+                    <div className="text-muted-foreground">Spare Supplied</div>
+                    <div className="font-semibold">{request.spare_supplied}</div>
                   </div>
                 )}
               </div>

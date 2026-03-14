@@ -2,7 +2,7 @@ import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from './AppSidebar';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bell, Search, LayoutDashboard, Wrench, Package, ClipboardList, Users, LogOut, Recycle, ShoppingCart, AlertTriangle, X, CheckCheck } from 'lucide-react';
+import { Bell, Search, LayoutDashboard, Wrench, Package, Repeat2, ClipboardList, Users, LogOut, Recycle, ShoppingCart, AlertTriangle, X, CheckCheck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -211,12 +211,15 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   const getPageContext = () => {
     const path = location.pathname.split('/')[1] || 'dashboard';
-    const title = path.charAt(0).toUpperCase() + path.slice(1);
+    const title = path === 'second-hand'
+      ? 'Second Hand'
+      : path.charAt(0).toUpperCase() + path.slice(1);
     const subtext = (() => {
       switch (path) {
         case 'dashboard': return 'Overview of your business metrics';
         case 'services': return 'Manage incoming service requests';
         case 'inventory': return 'Warehouse stock and product management';
+        case 'second-hand': return 'Track second-hand battery and inverter lifecycle';
         case 'scrap': return 'Track scrap batteries and salvage value';
         case 'transactions': return 'Detailed ledger of all movements';
         case 'users': return 'Manage team access and roles';
@@ -403,6 +406,10 @@ export function AppLayout({ children }: AppLayoutProps) {
                   <Package className="mr-2 h-4 w-4 text-amber-500" />
                   <span>Inventory</span>
                 </CommandItem>
+                <CommandItem onSelect={() => { setOpen(false); navigate('/second-hand') }}>
+                  <Repeat2 className="mr-2 h-4 w-4 text-orange-500" />
+                  <span>Second Hand</span>
+                </CommandItem>
                 <CommandItem onSelect={() => { setOpen(false); navigate('/scrap') }}>
                   <Recycle className="mr-2 h-4 w-4 text-indigo-400" />
                   <span>Scrap Management</span>
@@ -442,7 +449,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                           }}
                         >
                           <Package className="mr-2 h-4 w-4 text-amber-500" />
-                          <span className="flex-1 truncate">{p.name} — {p.model}</span>
+                          <span className="flex-1 truncate">{p.name} - {p.model}</span>
                           {typeof p.qty === 'number' && (
                             <span className="text-xs text-slate-500 dark:text-slate-400">Qty {p.qty}</span>
                           )}
@@ -463,7 +470,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                           }}
                         >
                           <Wrench className="mr-2 h-4 w-4 text-emerald-400" />
-                          <span className="flex-1 truncate">{t.ticket_number || 'Ticket'} — {t.customer_name}</span>
+                          <span className="flex-1 truncate">{t.ticket_number || 'Ticket'} - {t.customer_name}</span>
                           <span className="text-xs text-slate-500 dark:text-slate-400">{t.customer_phone}</span>
                         </CommandItem>
                       ))}
@@ -482,7 +489,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                           }}
                         >
                           <Wrench className="mr-2 h-4 w-4 text-[#4F8CFF]" />
-                          <span className="flex-1 truncate">{r.request_number} — {r.customer_name}</span>
+                          <span className="flex-1 truncate">{r.request_number} - {r.customer_name}</span>
                           <span className="text-xs text-slate-500 dark:text-slate-400">{r.customer_phone}</span>
                         </CommandItem>
                       ))}

@@ -14,6 +14,198 @@ export type Database = {
   }
   public: {
     Tables: {
+      customers: {
+        Row: {
+          address: string | null
+          city: string | null
+          created_at: string
+          email: string | null
+          id: string
+          name: string
+          notes: string | null
+          phone: string
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          city?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          name: string
+          notes?: string | null
+          phone: string
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          city?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          name?: string
+          notes?: string | null
+          phone?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      home_service_request_sla: {
+        Row: {
+          created_at: string
+          duration_assigned_to_resolved: number | null
+          duration_open_to_assigned: number | null
+          duration_resolved_to_closed: number | null
+          id: string
+          request_id: string
+          time_assigned: string | null
+          time_closed: string | null
+          time_opened: string
+          time_resolved: string | null
+          total_duration: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          duration_assigned_to_resolved?: number | null
+          duration_open_to_assigned?: number | null
+          duration_resolved_to_closed?: number | null
+          id?: string
+          request_id: string
+          time_assigned?: string | null
+          time_closed?: string | null
+          time_opened: string
+          time_resolved?: string | null
+          total_duration?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          duration_assigned_to_resolved?: number | null
+          duration_open_to_assigned?: number | null
+          duration_resolved_to_closed?: number | null
+          id?: string
+          request_id?: string
+          time_assigned?: string | null
+          time_closed?: string | null
+          time_opened?: string
+          time_resolved?: string | null
+          total_duration?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      home_service_requests: {
+        Row: {
+          address: string
+          assigned_at: string | null
+          assigned_to: string | null
+          battery_model: string | null
+          created_at: string
+          created_by: string
+          customer_id: string | null
+          customer_name: string
+          customer_phone: string
+          id: string
+          inverter_model: string | null
+          issue_description: string
+          priority: "LOW" | "MEDIUM" | "HIGH"
+          request_number: string
+          spare_supplied: string | null
+          status: Database["public"]["Enums"]["service_status"]
+          updated_at: string
+        }
+        Insert: {
+          address: string
+          assigned_at?: string | null
+          assigned_to?: string | null
+          battery_model?: string | null
+          created_at?: string
+          created_by: string
+          customer_id?: string | null
+          customer_name: string
+          customer_phone: string
+          id?: string
+          inverter_model?: string | null
+          issue_description: string
+          priority?: "LOW" | "MEDIUM" | "HIGH"
+          request_number?: string
+          spare_supplied?: string | null
+          status?: Database["public"]["Enums"]["service_status"]
+          updated_at?: string
+        }
+        Update: {
+          address?: string
+          assigned_at?: string | null
+          assigned_to?: string | null
+          battery_model?: string | null
+          created_at?: string
+          created_by?: string
+          customer_id?: string | null
+          customer_name?: string
+          customer_phone?: string
+          id?: string
+          inverter_model?: string | null
+          issue_description?: string
+          priority?: "LOW" | "MEDIUM" | "HIGH"
+          request_number?: string
+          spare_supplied?: string | null
+          status?: Database["public"]["Enums"]["service_status"]
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      home_service_resolutions: {
+        Row: {
+          battery_resolution_notes: string | null
+          battery_resolved: boolean | null
+          closed_at: string
+          closed_by: string
+          created_at: string
+          id: string
+          inverter_resolution_notes: string | null
+          inverter_resolved: boolean | null
+          payment_method: "CASH" | "CARD" | "UPI" | null
+          request_id: string
+          resolved_at: string
+          resolved_by: string
+          total_amount: number | null
+          updated_at: string
+        }
+        Insert: {
+          battery_resolution_notes?: string | null
+          battery_resolved?: boolean | null
+          closed_at: string
+          closed_by: string
+          created_at?: string
+          id?: string
+          inverter_resolution_notes?: string | null
+          inverter_resolved?: boolean | null
+          payment_method?: "CASH" | "CARD" | "UPI" | null
+          request_id: string
+          resolved_at: string
+          resolved_by: string
+          total_amount?: number | null
+          updated_at?: string
+        }
+        Update: {
+          battery_resolution_notes?: string | null
+          battery_resolved?: boolean | null
+          closed_at?: string
+          closed_by?: string
+          created_at?: string
+          id?: string
+          inverter_resolution_notes?: string | null
+          inverter_resolved?: boolean | null
+          payment_method?: "CASH" | "CARD" | "UPI" | null
+          request_id?: string
+          resolved_at?: string
+          resolved_by?: string
+          total_amount?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       products: {
         Row: {
           capacity: string | null
@@ -151,6 +343,51 @@ export type Database = {
           },
         ]
       }
+      service_ticket_sla: {
+        Row: {
+          created_at: string
+          duration_assigned_to_resolved: number | null
+          duration_open_to_assigned: number | null
+          duration_resolved_to_closed: number | null
+          id: string
+          ticket_id: string
+          time_assigned: string | null
+          time_closed: string | null
+          time_opened: string
+          time_resolved: string | null
+          total_duration: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          duration_assigned_to_resolved?: number | null
+          duration_open_to_assigned?: number | null
+          duration_resolved_to_closed?: number | null
+          id?: string
+          ticket_id: string
+          time_assigned?: string | null
+          time_closed?: string | null
+          time_opened: string
+          time_resolved?: string | null
+          total_duration?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          duration_assigned_to_resolved?: number | null
+          duration_open_to_assigned?: number | null
+          duration_resolved_to_closed?: number | null
+          id?: string
+          ticket_id?: string
+          time_assigned?: string | null
+          time_closed?: string | null
+          time_opened?: string
+          time_resolved?: string | null
+          total_duration?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       service_tickets: {
         Row: {
           assigned_to: string | null
@@ -164,6 +401,7 @@ export type Database = {
           battery_resolved_by: string | null
           created_at: string
           created_by: string
+          customer_id: string | null
           customer_name: string
           customer_phone: string
           id: string
@@ -193,6 +431,7 @@ export type Database = {
           battery_resolved_by?: string | null
           created_at?: string
           created_by: string
+          customer_id?: string | null
           customer_name: string
           customer_phone: string
           id?: string
@@ -222,6 +461,7 @@ export type Database = {
           battery_resolved_by?: string | null
           created_at?: string
           created_by?: string
+          customer_id?: string | null
           customer_name?: string
           customer_phone?: string
           id?: string
@@ -240,6 +480,99 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      second_hand_lifecycle: {
+        Row: {
+          address: string | null
+          created_at: string
+          customer_name: string
+          end_date: string | null
+          id: string
+          lifecycle_status: "SOLD" | "ACTIVE" | "PARTIALLY_RETURNED" | "RETURNED"
+          mobile_number: string | null
+          payment_method: "CASH" | "CARD" | "UPI" | null
+          product_category: string
+          product_id: string
+          product_model: string
+          product_name: string
+          quantity: number
+          recorded_by: string
+          remarks: string | null
+          return_remarks: string | null
+          returned_at: string | null
+          returned_quantity: number
+          start_date: string | null
+          transaction_group_id: string
+          transaction_type: "SALE" | "RENT_OUT" | "GOOD_WILL"
+          unit_price: number
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          created_at?: string
+          customer_name: string
+          end_date?: string | null
+          id?: string
+          lifecycle_status?: "SOLD" | "ACTIVE" | "PARTIALLY_RETURNED" | "RETURNED"
+          mobile_number?: string | null
+          payment_method?: "CASH" | "CARD" | "UPI" | null
+          product_category: string
+          product_id: string
+          product_model: string
+          product_name: string
+          quantity?: number
+          recorded_by: string
+          remarks?: string | null
+          return_remarks?: string | null
+          returned_at?: string | null
+          returned_quantity?: number
+          start_date?: string | null
+          transaction_group_id?: string
+          transaction_type: "SALE" | "RENT_OUT" | "GOOD_WILL"
+          unit_price?: number
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          created_at?: string
+          customer_name?: string
+          end_date?: string | null
+          id?: string
+          lifecycle_status?: "SOLD" | "ACTIVE" | "PARTIALLY_RETURNED" | "RETURNED"
+          mobile_number?: string | null
+          payment_method?: "CASH" | "CARD" | "UPI" | null
+          product_category?: string
+          product_id?: string
+          product_model?: string
+          product_name?: string
+          quantity?: number
+          recorded_by?: string
+          remarks?: string | null
+          return_remarks?: string | null
+          returned_at?: string | null
+          returned_quantity?: number
+          start_date?: string | null
+          transaction_group_id?: string
+          transaction_type?: "SALE" | "RENT_OUT" | "GOOD_WILL"
+          unit_price?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "second_hand_lifecycle_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "second_hand_lifecycle_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       stock_transactions: {
         Row: {
@@ -443,6 +776,7 @@ export type Database = {
         | "admin"
         | "counter_staff"
         | "service_agent"
+        | "service_technician"
         | "warehouse_staff"
         | "procurement_staff"
         | "sp_battery"

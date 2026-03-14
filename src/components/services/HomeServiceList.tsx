@@ -29,13 +29,15 @@ const priorityColors: Record<string, string> = {
   HIGH: 'bg-red-500/10 text-red-600 dark:text-red-400',
 };
 
+const statusFilterOptions: Array<'all' | HomeServiceRequest['status']> = ['all', 'OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'];
+
 export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, initialSearch }: HomeServiceListProps) {
   const { user } = useAuth();
   const [requests, setRequests] = useState<HomeServiceRequest[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(initialSearch ?? '');
-  const [statusFilter, setStatusFilter] = useState('all');
+	  const [statusFilter, setStatusFilter] = useState<'all' | HomeServiceRequest['status']>('all');
   const deferredSearch = useDeferredValue(search.trim());
   const fetchRequestsRef = useRef<() => Promise<void>>(async () => {});
 
@@ -127,7 +129,7 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
     <div className="space-y-4">
       <div className="flex flex-col gap-4 justify-between rounded-lg border border-slate-200 bg-white p-3 dark:border-white/5 dark:bg-[#111827]/40 lg:flex-row lg:items-center">
         <div className="flex overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-white/5 dark:bg-[#0B0F19]">
-          {['all', 'OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'].map((status) => (
+          {statusFilterOptions.map((status) => (
             <button
               key={status}
               onClick={() => setStatusFilter(status)}
@@ -210,6 +212,14 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
                           <div className="flex items-center gap-2">
                             <Zap className="h-3.5 w-3.5" />
                             <span>Inverter: {request.inverter_model}</span>
+                          </div>
+                        )}
+                        {request.spare_supplied && (
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[9px] font-bold">
+                              S
+                            </span>
+                            <span>Spare: {request.spare_supplied}</span>
                           </div>
                         )}
                       </div>

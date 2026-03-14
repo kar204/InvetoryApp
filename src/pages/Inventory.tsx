@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, Minus, Search, Package, ArrowUpCircle, ArrowDownCircle, Download, Trash2, X, Upload, ShoppingCart, AlertTriangle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -12,12 +12,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { supabase } from '@/integrations/supabase/client';
-import { Product, WarehouseStock, TransactionType, StockSource } from '@/types/database';
+import { Product, Profile, StockSource, TransactionType, WarehouseStock } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { usePollingRefresh } from '@/hooks/usePollingRefresh';
 import { Badge } from '@/components/ui/badge';
 import { downloadCSV, formatStockForExport } from '@/utils/exportUtils';
+import { isSecondHandCategory } from '@/lib/secondHand';
 import * as XLSX from 'xlsx';
 import {
   AlertDialog,
@@ -31,6 +32,24 @@ import {
 } from '@/components/ui/alert-dialog';
 
 export default function Inventory() {
+  type SaleRecipientRole = 'service_technician' | 'sp_invertor';
+
+  const saleRecipientRoles: SaleRecipientRole[] = ['service_technician', 'sp_invertor'];
+  const saleRecipientRoleLabels: Record<SaleRecipientRole, string> = {
+    service_technician: 'Home Technician',
+    sp_invertor: 'SP Invertor',
+  };
+  const productCategories = ['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF', 'Spares'];
+  const productCategoryLabels: Record<string, string> = {
+    Battery: 'Batteries',
+    Inverter: 'Inverters',
+    UPS: 'UPS',
+    Trolly: 'Trollys',
+    'Solar Panel': 'Solar Panels',
+    Charger: 'Chargers',
+    SMF: 'SMFs',
+    Spares: 'Spares',
+  };
   const location = useLocation();
   const { user, hasRole, hasAnyRole } = useAuth();
   const { toast } = useToast();
@@ -50,7 +69,8 @@ export default function Inventory() {
   const [stockTransactions, setStockTransactions] = useState<any[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [historyTab, setHistoryTab] = useState<'sales' | 'transfers'>('sales');
-  const [profiles, setProfiles] = useState<any[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [saleRecipients, setSaleRecipients] = useState<Array<{ user_id: string; name: string; roles: SaleRecipientRole[] }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [transferProductSearch, setTransferProductSearch] = useState('');
   const [saleProductSearch, setSaleProductSearch] = useState('');
@@ -75,6 +95,7 @@ export default function Inventory() {
   const [saleForm, setSaleForm] = useState({
     customer_name: '',
     payment_method: 'CASH',
+    technician_user_id: '',
   });
 
   const [transferItems, setTransferItems] = useState<{ productId: string; quantity: number }[]>([]);
@@ -85,11 +106,14 @@ export default function Inventory() {
   const isProcurementStaff = hasRole('procurement_staff');
   const isAdmin = hasRole('admin');
 
-  // Deep-link support: /inventory?q=...
+  // Deep-link support: /inventory?q=... or /inventory?action=sale
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const q = (params.get('q') || '').trim();
     if (q) setSearch(q);
+    
+    const action = params.get('action');
+    if (action === 'sale') setIsRecordSaleOpen(true);
   }, [location.search]);
 
   useEffect(() => {
@@ -135,8 +159,35 @@ export default function Inventory() {
 
   const fetchProfiles = async () => {
     try {
-      const { data } = await supabase.from('profiles').select('*');
-      setProfiles(data || []);
+      const [profilesRes, rolesRes] = await Promise.all([
+        supabase.from('profiles').select('*'),
+        supabase.from('user_roles').select('user_id, role').in('role', saleRecipientRoles),
+      ]);
+
+      if (profilesRes.error) throw profilesRes.error;
+      if (rolesRes.error) throw rolesRes.error;
+
+      const profileData = (profilesRes.data as Profile[]) || [];
+      const rolesByUser = new Map<string, SaleRecipientRole[]>();
+
+      ((rolesRes.data as Array<{ user_id: string; role: SaleRecipientRole }>) || []).forEach(({ user_id, role }) => {
+        const existingRoles = rolesByUser.get(user_id) || [];
+        if (!existingRoles.includes(role)) {
+          rolesByUser.set(user_id, [...existingRoles, role]);
+        }
+      });
+
+      setProfiles(profileData);
+      setSaleRecipients(
+        profileData
+          .filter((profile) => rolesByUser.has(profile.user_id))
+          .map((profile) => ({
+            user_id: profile.user_id,
+            name: profile.name,
+            roles: rolesByUser.get(profile.user_id) || [],
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      );
     } catch (err) {
       console.error('Error fetching profiles:', err);
     }
@@ -184,12 +235,17 @@ export default function Inventory() {
   const fetchData = async () => {
     try {
       const [productsRes, stockRes] = await Promise.all([
-        supabase.from('products').select('*').order('name'),
+        supabase
+          .from('products')
+          .select('*')
+          .not('category', 'in', '("SH Battery", "SH Inverter")')
+          .order('name'),
         supabase.from('warehouse_stock').select('*, product:products(*)'),
       ]);
 
       setProducts((productsRes.data as Product[]) || []);
-      setStock((stockRes.data as WarehouseStock[]) || []);
+      const allStock = (stockRes.data as WarehouseStock[]) || [];
+      setStock(allStock.filter(item => !isSecondHandCategory(item.product?.category)));
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -339,8 +395,16 @@ export default function Inventory() {
   const handleRecordSale = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!user || saleItems.length === 0 || !saleForm.customer_name) {
-      toast({ title: 'Please fill all fields and add at least one product', variant: 'destructive' });
+    const customerName = saleForm.customer_name.trim();
+    const selectedRecipient = saleRecipients.find((recipient) => recipient.user_id === saleForm.technician_user_id);
+    const saleRecipientName = customerName || selectedRecipient?.name || '';
+
+    if (!user || saleItems.length === 0 || !saleRecipientName) {
+      toast({
+        title: 'Missing sale recipient',
+        description: 'Enter a customer name or select a technician, then add at least one product.',
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -353,7 +417,7 @@ export default function Inventory() {
       const { data: sale, error: saleError } = await supabase
         .from('warehouse_sales')
         .insert({
-          customer_name: saleForm.customer_name,
+          customer_name: saleRecipientName,
           payment_method: saleForm.payment_method,
           sold_by: user.id,
           total_amount: totalAmount,
@@ -395,9 +459,9 @@ export default function Inventory() {
         }
       }
 
-      toast({ title: 'Sale recorded successfully', description: `Recorded sale for ${saleForm.customer_name}` });
+      toast({ title: 'Sale recorded successfully', description: `Recorded sale for ${saleRecipientName}` });
       setIsRecordSaleOpen(false);
-      setSaleForm({ customer_name: '', payment_method: 'CASH' });
+      setSaleForm({ customer_name: '', payment_method: 'CASH', technician_user_id: '' });
       setSaleItems([]);
       fetchData();
     } catch (error: unknown) {
@@ -576,33 +640,23 @@ export default function Inventory() {
 
   const handleDownloadTemplate = () => {
     // Include existing products + empty rows for new products
-    const templateData = stock.map(item => ({
-      'Product ID': item.product_id,
-      'Product Name': item.product?.name || '',
-      'Model': item.product?.model || '',
-      'Category': item.product?.category || '',
-      'Capacity': item.product?.capacity || '',
-      'Current Quantity': item.quantity,
-      'New Quantity': item.quantity,
-    }));
-    // Add 5 blank rows for new products
-    for (let i = 0; i < 5; i++) {
-      templateData.push({
-        'Product ID': '' as any,
-        'Product Name': '',
-        'Model': '',
-        'Category': '',
-        'Capacity': '',
-        'Current Quantity': '' as any,
-        'New Quantity': '' as any,
-      });
-    }
+    const templateData = stock
+      .map(item => ({
+        'Product ID': item.product_id,
+        'Product Name': item.product?.name || '',
+        'Model': item.product?.model || '',
+        'Category': item.product?.category || '',
+        'Capacity': item.product?.capacity || '',
+        'Current Quantity': item.quantity,
+        'New Quantity': item.quantity,
+      }));
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inventory');
     XLSX.writeFile(wb, `inventory-template-${new Date().toISOString().split('T')[0]}.xlsx`);
-    toast({ title: 'Template downloaded', description: 'Edit quantities for existing products OR fill Name/Model/Category to add new ones (leave Product ID blank for new)' });
+    toast({ title: 'Template downloaded', description: 'Edit quantities for existing products' });
   };
+
 
   const handleBulkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -627,6 +681,11 @@ export default function Inventory() {
 
         // Mode 1: Update existing product stock
         if (productId && !isNaN(newQty) && newQty >= 0) {
+          const stockItem = stock.find((item) => item.product_id === productId);
+          if (!stockItem) {
+            continue;
+          }
+
           const { error } = await supabase
             .from('warehouse_stock')
             .update({ quantity: newQty })
@@ -636,11 +695,11 @@ export default function Inventory() {
         }
 
         // Mode 2: Create new product if Name, Model, Category are filled
-        if (!productId && productName && model && category) {
+        if (!productId && productName && model && category && productCategories.includes(category)) {
           const qty = !isNaN(newQty) && newQty >= 0 ? newQty : 0;
           const { data: newProduct, error: productError } = await supabase
             .from('products')
-            .insert({ name: productName, model, category: category || 'Battery', capacity })
+            .insert({ name: productName, model, category, capacity })
             .select()
             .single();
 
@@ -656,6 +715,7 @@ export default function Inventory() {
           if (!stockError) created++;
         }
       }
+
 
       const parts = [];
       if (updated > 0) parts.push(`Updated ${updated} items`);
@@ -688,19 +748,41 @@ export default function Inventory() {
   const transactionOptions = getTransactionOptions();
 
   // Filtered products for transfer/sale search
-  const filteredTransferProducts = products.filter(p =>
-    !transferItems.some(item => item.productId === p.id) &&
-    (p.name.toLowerCase().includes(transferProductSearch.toLowerCase()) ||
-      p.model.toLowerCase().includes(transferProductSearch.toLowerCase()))
-  );
+  const filteredTransferProducts = products.filter(p => {
+    if (transferItems.some(item => item.productId === p.id)) return false;
+    
+    const searchLower = transferProductSearch.toLowerCase().trim();
+    if (!searchLower) return true; // Show all available items if no search
+    
+    const pName = p.name.toLowerCase();
+    const pModel = p.model.toLowerCase();
+    const combined = `${pName} ${pModel}`;
+    
+    return pName.includes(searchLower) || 
+           pModel.includes(searchLower) || 
+           combined.includes(searchLower);
+  });
+
 
   const filteredSaleProducts = products.filter(p => {
+    if (saleItems.some(item => item.productId === p.id)) return false;
+    if (['SH Battery', 'SH Inverter'].includes(p.category)) return false;
+    
     const stockItem = stock.find(s => s.product_id === p.id);
-    return !saleItems.some(item => item.productId === p.id) &&
-      (stockItem?.quantity || 0) > 0 &&
-      (p.name.toLowerCase().includes(saleProductSearch.toLowerCase()) ||
-        p.model.toLowerCase().includes(saleProductSearch.toLowerCase()));
+    if ((stockItem?.quantity || 0) <= 0) return false;
+    
+    const searchLower = saleProductSearch.toLowerCase().trim();
+    if (!searchLower) return true; // Show all items in stock if no search
+    
+    const pName = p.name.toLowerCase();
+    const pModel = p.model.toLowerCase();
+    const combined = `${pName} ${pModel}`;
+    
+    return pName.includes(searchLower) || 
+           pModel.includes(searchLower) || 
+           combined.includes(searchLower);
   });
+  const selectedSaleRecipient = saleRecipients.find((recipient) => recipient.user_id === saleForm.technician_user_id);
 
   return (
     <AppLayout>
@@ -785,14 +867,11 @@ export default function Inventory() {
                       <Select value={productForm.category} onValueChange={(v) => setProductForm({ ...productForm, category: v })}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="Battery">Battery</SelectItem>
-                          <SelectItem value="Inverter">Inverter</SelectItem>
-                          <SelectItem value="UPS">UPS</SelectItem>
-                          <SelectItem value="Trolly">Trolly</SelectItem>
-                          <SelectItem value="Solar Panel">Solar Panel</SelectItem>
-                          <SelectItem value="Charger">Charger</SelectItem>
-                          <SelectItem value="SMF">SMF</SelectItem>
-                          <SelectItem value="Spares">Spares</SelectItem>
+                          {productCategories.map((category) => (
+                            <SelectItem key={category} value={category}>
+                              {category}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -855,16 +934,39 @@ export default function Inventory() {
                           placeholder="Enter customer name"
                           value={saleForm.customer_name}
                           onChange={(e) => setSaleForm({ ...saleForm, customer_name: e.target.value })}
-                          required
                         />
                       </div>
                       <div className="space-y-2">
+                        <Label htmlFor="technician_user_id">Technician</Label>
+                        <Select
+                          value={saleForm.technician_user_id}
+                          onValueChange={(value) => setSaleForm({ ...saleForm, technician_user_id: value })}
+                        >
+                          <SelectTrigger id="technician_user_id">
+                            <SelectValue placeholder="Select home technician or SP Invertor" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {saleRecipients.length > 0 ? (
+                              saleRecipients.map((recipient) => (
+                                <SelectItem key={recipient.user_id} value={recipient.user_id}>
+                                  {recipient.name} - {recipient.roles.map((role) => saleRecipientRoleLabels[role]).join(', ')}
+                                </SelectItem>
+                              ))
+                            ) : (
+                              <SelectItem value="__no_recipients__" disabled>
+                                No eligible technicians found
+                              </SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2 sm:col-span-2">
                         <Label htmlFor="payment_method">Payment Method</Label>
                         <Select
                           value={saleForm.payment_method}
                           onValueChange={(value) => setSaleForm({ ...saleForm, payment_method: value })}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger id="payment_method">
                             <SelectValue placeholder="Select payment method" />
                           </SelectTrigger>
                           <SelectContent>
@@ -875,6 +977,10 @@ export default function Inventory() {
                         </Select>
                       </div>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      Enter a customer name or choose a technician from Home Technician and SP Invertor users.
+                      {selectedSaleRecipient ? ` Selected technician: ${selectedSaleRecipient.name}.` : ''}
+                    </p>
 
                     <div className="space-y-2 border-t pt-4">
                       <Label>Add Products to Sale</Label>
@@ -887,108 +993,123 @@ export default function Inventory() {
                             onChange={(e) => setSaleProductSearch(e.target.value)}
                             className="pl-8"
                           />
-                          {saleProductSearch && filteredSaleProducts.length > 0 && (
-                            <div className="absolute z-10 w-full mt-1 bg-background border rounded-md shadow-lg max-h-48 overflow-y-auto">
+                          {saleProductSearch.trim().length > 0 && filteredSaleProducts.length > 0 && (
+                            <div className="absolute z-10 w-full mt-1 bg-background border border-slate-200 dark:border-white/10 rounded-xl shadow-2xl max-h-60 overflow-y-auto backdrop-blur-xl animate-in fade-in slide-in-from-top-2 duration-200 overscroll-contain styled-scrollbar">
                               {filteredSaleProducts.map(product => (
                                 <button
                                   key={product.id}
                                   type="button"
-                                  className="w-full text-left px-3 py-2 hover:bg-accent flex justify-between items-center"
+                                  className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-white/5 flex justify-between items-center transition-colors border-b last:border-0 border-slate-100 dark:border-white/5"
                                   onClick={() => addProductToSale(product.id)}
                                 >
-                                  <div>
-                                    <p className="font-medium text-sm">{product.name}</p>
-                                    <p className="text-xs text-muted-foreground">{product.model}</p>
+                                  <div className="min-w-0">
+                                    <p className="font-bold text-sm text-slate-800 dark:text-slate-200 truncate">{product.name}</p>
+                                    <p className="text-xs text-slate-500 truncate">{product.model}</p>
                                   </div>
-                                  <Badge variant="outline">
+                                  <Badge variant="outline" className="ml-3 shrink-0 bg-[#4F8CFF]/5 text-[#4F8CFF] border-[#4F8CFF]/20">
                                     {stock.find(s => s.product_id === product.id)?.quantity || 0} in stock
                                   </Badge>
                                 </button>
                               ))}
                             </div>
                           )}
+                          {saleProductSearch.trim().length > 0 && filteredSaleProducts.length === 0 && (
+                            <div className="absolute z-10 w-full mt-1 bg-background border border-slate-200 dark:border-white/10 rounded-xl shadow-xl p-4 text-center text-sm text-slate-500 animate-in fade-in duration-200">
+                              No products found matching "{saleProductSearch}"
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label>Sale Items</Label>
+                    <div className="space-y-3">
+                      <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Selected Items</Label>
                       {saleItems.length === 0 ? (
-                        <p className="text-sm text-muted-foreground py-4 text-center border rounded-md border-dashed">
-                          No items added to sale yet
-                        </p>
+                        <div className="bg-slate-50 dark:bg-white/[0.02] border-2 border-dashed border-slate-200 dark:border-white/5 rounded-2xl py-8 flex flex-col items-center justify-center gap-2 text-slate-500">
+                          <Package className="h-8 w-8 opacity-20" />
+                          <p className="text-sm font-medium">No items added to sale yet</p>
+                        </div>
                       ) : (
-                        <div className="border rounded-md divide-y">
-                          {saleItems.map((item, index) => {
+                        <div className="grid gap-3">
+                          {saleItems.map((item) => {
                             const product = products.find(p => p.id === item.productId);
                             const stockItem = stock.find(s => s.product_id === item.productId);
                             const max = stockItem?.quantity || 0;
 
                             return (
-                              <div key={item.productId} className="p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                                <div className="flex-1 w-full sm:w-auto overflow-hidden">
-                                  <p className="font-medium text-sm truncate">{product?.name}</p>
-                                  <p className="text-xs text-muted-foreground truncate">{product?.model}</p>
+                              <div key={item.productId} className="group relative bg-white dark:bg-[#1B2438]/40 border border-slate-200 dark:border-white/5 rounded-2xl p-4 flex flex-col sm:grid sm:grid-cols-[1fr_auto_auto_auto] items-start sm:items-center gap-4 transition-all hover:border-[#4F8CFF]/30">
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-bold text-slate-900 dark:text-white text-sm truncate">{product?.name}</p>
+                                  <p className="text-xs text-slate-500 truncate">{product?.model}</p>
                                 </div>
-                                <div className="flex flex-wrap sm:flex-nowrap items-center gap-4 w-full sm:w-auto">
-                                  <div className="flex flex-col items-start sm:items-end gap-1 flex-1 sm:flex-none">
-                                    <Label className="text-[10px] uppercase text-muted-foreground">Price</Label>
+                                
+                                <div className="flex flex-col gap-1 w-full sm:w-auto">
+                                  <span className="text-[10px] font-bold uppercase text-slate-500 tracking-tighter">Unit Price</span>
+                                  <div className="relative">
+                                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-500">₹</span>
                                     <Input
                                       type="number"
-                                      className="w-24 h-8 text-right"
-                                      value={item.price}
+                                      className="w-full sm:w-28 h-9 pl-6 text-sm bg-slate-50 dark:bg-[#0B0F19]/60 border-slate-200 dark:border-white/5 font-bold"
+                                      value={item.price || ''}
+                                      placeholder="0"
                                       onChange={(e) => setSalePrice(item.productId, parseFloat(e.target.value))}
                                     />
                                   </div>
-                                  <div className="flex flex-col items-end gap-1">
-                                    <Label className="text-[10px] uppercase text-muted-foreground">Qty (Max: {max})</Label>
-                                    <div className="flex items-center gap-2">
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="icon"
-                                        className="h-7 w-7"
-                                        onClick={() => setSaleQuantity(item.productId, item.quantity - 1)}
-                                      >
-                                        <Minus className="h-3 w-3" />
-                                      </Button>
-                                      <Input
-                                        type="number"
-                                        className="h-7 w-12 text-center p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                        value={item.quantity === 0 ? '' : item.quantity}
-                                        onChange={(e) => {
-                                          const val = e.target.value;
-                                          setSaleQuantity(item.productId, val === '' ? 0 : parseInt(val));
-                                        }}
-                                      />
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="icon"
-                                        className="h-7 w-7"
-                                        onClick={() => setSaleQuantity(item.productId, item.quantity + 1)}
-                                        disabled={item.quantity >= max}
-                                      >
-                                        <Plus className="h-3 w-3" />
-                                      </Button>
-                                    </div>
-                                  </div>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-destructive"
-                                    onClick={() => removeProductFromSale(item.productId)}
-                                  >
-                                    <X className="h-4 w-4" />
-                                  </Button>
                                 </div>
+
+                                <div className="flex flex-col gap-1 w-full sm:w-auto">
+                                  <span className="text-[10px] font-bold uppercase text-slate-500 tracking-tighter">Quantity (Max: {max})</span>
+                                  <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-[#0B0F19]/60 rounded-xl border border-slate-200 dark:border-white/5">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 rounded-lg hover:bg-white dark:hover:bg-white/5"
+                                      onClick={() => setSaleQuantity(item.productId, item.quantity - 1)}
+                                    >
+                                      <Minus className="h-3 w-3" />
+                                    </Button>
+                                    <Input
+                                      type="number"
+                                      className="h-7 w-10 text-center text-xs p-0 border-0 bg-transparent font-bold focus-visible:ring-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                      value={item.quantity === 0 ? '' : item.quantity}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setSaleQuantity(item.productId, val === '' ? 0 : parseInt(val));
+                                      }}
+                                    />
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 rounded-lg hover:bg-white dark:hover:bg-white/5"
+                                      onClick={() => setSaleQuantity(item.productId, item.quantity + 1)}
+                                      disabled={item.quantity >= max}
+                                    >
+                                      <Plus className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-9 w-9 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                                  onClick={() => removeProductFromSale(item.productId)}
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
                               </div>
                             );
                           })}
-                          <div className="p-3 bg-muted/30 flex justify-between items-center font-bold">
-                            <span>Total Amount</span>
-                            <span className="text-chart-3">
+                          
+                          <div className="mt-2 p-5 rounded-2xl bg-[#22C55E]/5 border border-[#22C55E]/20 flex justify-between items-center group transition-colors hover:bg-[#22C55E]/10">
+                            <div>
+                              <p className="text-[11px] font-bold text-[#22C55E] uppercase tracking-wider">Estimated Total</p>
+                              <p className="text-xs text-slate-500">Based on added items</p>
+                            </div>
+                            <span className="text-2xl font-black text-[#22C55E] drop-shadow-sm">
                               ₹{saleItems.reduce((sum, item) => sum + (item.price * item.quantity), 0).toLocaleString('en-IN')}
                             </span>
                           </div>
@@ -1048,36 +1169,42 @@ export default function Inventory() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label>Add Products</Label>
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                          placeholder="Search products to add..."
-                          value={transferProductSearch}
-                          onChange={(e) => setTransferProductSearch(e.target.value)}
-                          className="pl-10"
-                        />
-                      </div>
-                      {transferProductSearch && filteredTransferProducts.length > 0 && (
-                        <div className="max-h-[150px] overflow-y-auto border rounded-md">
-                          {filteredTransferProducts.map(product => (
-                            <button
-                              key={product.id}
-                              type="button"
-                              className="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 flex justify-between items-center"
-                              onClick={() => addProductToTransfer(product.id)}
-                            >
-                              <span>{product.name} - {product.model}</span>
-                              <Badge variant="outline" className="text-xs">{(product as any).category}</Badge>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {transferProductSearch && filteredTransferProducts.length === 0 && (
-                        <p className="text-sm text-muted-foreground text-center py-2">No matching products</p>
-                      )}
-                    </div>
+                     <div className="space-y-2">
+                       <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Search Products</Label>
+                       <div className="relative">
+                         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                         <Input
+                           placeholder="Type product name or model..."
+                           value={transferProductSearch}
+                           onChange={(e) => setTransferProductSearch(e.target.value)}
+                           className="pl-10 h-10 bg-slate-50 dark:bg-[#0B0F19]/60 border-slate-200 dark:border-white/5 rounded-xl"
+                         />
+                       </div>
+                       
+                       {transferProductSearch.trim().length > 0 && filteredTransferProducts.length > 0 && (
+                         <div className="absolute z-10 w-full mt-1 bg-background border border-slate-200 dark:border-white/10 rounded-xl shadow-2xl max-h-48 overflow-y-auto backdrop-blur-xl animate-in fade-in slide-in-from-top-2 duration-200 styled-scrollbar border-t-0">
+                           {filteredTransferProducts.map(product => (
+                             <button
+                               key={product.id}
+                               type="button"
+                               className="w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-white/5 flex justify-between items-center transition-colors border-b last:border-0 border-slate-100 dark:border-white/5"
+                               onClick={() => addProductToTransfer(product.id)}
+                             >
+                               <div className="min-w-0">
+                                 <p className="font-bold text-slate-800 dark:text-slate-200 truncate">{product.name}</p>
+                                 <p className="text-[10px] text-slate-500 truncate">{product.model}</p>
+                               </div>
+                               <Badge variant="outline" className="ml-2 shrink-0 text-[10px] bg-slate-500/5 text-slate-500 border-slate-500/20 truncate max-w-[80px]">{(product as any).category}</Badge>
+                             </button>
+                           ))}
+                         </div>
+                       )}
+                       {transferProductSearch.trim().length > 0 && filteredTransferProducts.length === 0 && (
+                         <div className="absolute z-10 w-full mt-1 bg-background border border-slate-200 dark:border-white/10 rounded-xl shadow-xl p-3 text-center text-xs text-slate-500 animate-in fade-in duration-200">
+                           No matches for "{transferProductSearch}"
+                         </div>
+                       )}
+                     </div>
 
                     {transferItems.length > 0 && (
                       <div className="space-y-2 max-h-[300px] overflow-y-auto border rounded-md p-2">
@@ -1187,9 +1314,9 @@ export default function Inventory() {
                 <TabsTrigger value="all" className="rounded-full border data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                   All ({filteredStock.length})
                 </TabsTrigger>
-                {['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF', 'Spares'].map(cat => {
+                {productCategories.map(cat => {
                   const count = filterByCategory(cat).length;
-                  const label = cat === 'Spares' ? 'Spares' : `${cat}s`;
+                  const label = productCategoryLabels[cat] || cat;
                   return (
                     <TabsTrigger key={cat} value={cat} className="rounded-full border data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                       {label} ({count})
@@ -1209,12 +1336,12 @@ export default function Inventory() {
                   {renderStockTable(filteredStock)}
                 </TabsContent>
 
-                {['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF', 'Spares'].map(cat => (
+                {productCategories.map(cat => (
                   <TabsContent key={cat} value={cat} className="m-0">
                     <div className="p-4 bg-muted/30 border-b">
                       <h2 className="font-semibold flex items-center gap-2">
                         <Package className="h-4 w-4 text-primary" />
-                        {cat} Stock
+                        {productCategoryLabels[cat] || cat}
                       </h2>
                     </div>
                     {renderStockTable(filterByCategory(cat))}
@@ -1288,7 +1415,8 @@ export default function Inventory() {
                             a.items?.some((i: any) => {
                               const pName = i.product?.name?.toLowerCase() || '';
                               const pModel = i.model_number?.toLowerCase() || '';
-                              return pName.includes(sLower) || pModel.includes(sLower);
+                              const combined = `${pName} ${pModel}`;
+                              return pName.includes(sLower) || pModel.includes(sLower) || combined.includes(sLower);
                             });
                           return matchesSearch;
                         });
@@ -1322,7 +1450,7 @@ export default function Inventory() {
                             </TableCell>
                             <TableCell>
                               <div className="font-medium">{act.details}</div>
-{act.items.length > 0 && (
+                              {act.items.length > 0 && (
                                 <div className="text-[10px] text-muted-foreground mt-1">
                                   {act.items.map((i: any, idx: number) => (
                                     <span key={idx}>

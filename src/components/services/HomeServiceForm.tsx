@@ -15,6 +15,18 @@ interface HomeServiceFormProps {
   onRequestCreated: () => void;
 }
 
+type HomeServiceFormData = {
+  customer_name: string;
+  customer_phone: string;
+  address: string;
+  selected_battery_model: string;
+  custom_battery_model: string;
+  selected_inverter_model: string;
+  custom_inverter_model: string;
+  issue_description: string;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH';
+};
+
 export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -22,15 +34,19 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
 
-  const [formData, setFormData] = useState({
+  const initialFormData: HomeServiceFormData = {
     customer_name: '',
     customer_phone: '',
     address: '',
-    battery_model: '',
-    inverter_model: '',
+    selected_battery_model: '',
+    custom_battery_model: '',
+    selected_inverter_model: '',
+    custom_inverter_model: '',
     issue_description: '',
     priority: 'MEDIUM',
-  });
+  };
+
+  const [formData, setFormData] = useState<HomeServiceFormData>(initialFormData);
 
   useEffect(() => {
     fetchProducts();
@@ -45,10 +61,18 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
     }
   };
 
+  const resolveModelValue = (customValue: string, selectedValue: string) => {
+    const trimmedCustomValue = customValue.trim();
+    return trimmedCustomValue || selectedValue.trim();
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!user) return;
+
+    const batteryModel = resolveModelValue(formData.custom_battery_model, formData.selected_battery_model);
+    const inverterModel = resolveModelValue(formData.custom_inverter_model, formData.selected_inverter_model);
 
     if (!formData.customer_name || !formData.customer_phone || !formData.address || !formData.issue_description) {
       toast({
@@ -59,7 +83,7 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
       return;
     }
 
-    if (!formData.battery_model && !formData.inverter_model) {
+    if (!batteryModel && !inverterModel) {
       toast({
         title: 'Validation Error',
         description: 'Please select at least Battery Model or Inverter Model.',
@@ -95,8 +119,8 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
         customer_name: formData.customer_name,
         customer_phone: formData.customer_phone,
         address: formData.address,
-        battery_model: formData.battery_model || null,
-        inverter_model: formData.inverter_model || null,
+        battery_model: batteryModel || null,
+        inverter_model: inverterModel || null,
         issue_description: formData.issue_description,
         priority: formData.priority,
         created_by: user.id,
@@ -114,15 +138,7 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
         description: `Request #${data?.request_number ?? ''} created successfully.`,
       });
 
-      setFormData({
-        customer_name: '',
-        customer_phone: '',
-        address: '',
-        battery_model: '',
-        inverter_model: '',
-        issue_description: '',
-        priority: 'MEDIUM',
-      });
+      setFormData({ ...initialFormData });
 
       setIsOpen(false);
 
@@ -194,11 +210,14 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="battery_model">Battery Model</Label>
+              <Label htmlFor="battery_model">Battery Model (Optional)</Label>
               <div className="flex gap-2">
-                <Select value={formData.battery_model} onValueChange={(value) => setFormData({ ...formData, battery_model: value })}>
+                <Select
+                  value={formData.selected_battery_model}
+                  onValueChange={(value) => setFormData({ ...formData, selected_battery_model: value })}
+                >
                   <SelectTrigger id="battery_model" className="flex-1">
-                    <SelectValue placeholder="Select or type..." />
+                    <SelectValue placeholder="Select from list" />
                   </SelectTrigger>
                   <SelectContent>
                     {products
@@ -213,18 +232,21 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
               </div>
               <Input
                 placeholder="Or type custom model"
-                value={formData.battery_model}
-                onChange={(e) => setFormData({ ...formData, battery_model: e.target.value })}
+                value={formData.custom_battery_model}
+                onChange={(e) => setFormData({ ...formData, custom_battery_model: e.target.value })}
                 className="mt-2"
               />
             </div>
 
             <div>
-              <Label htmlFor="inverter_model">Inverter Model</Label>
+              <Label htmlFor="inverter_model">Inverter Model (Optional)</Label>
               <div className="flex gap-2">
-                <Select value={formData.inverter_model} onValueChange={(value) => setFormData({ ...formData, inverter_model: value })}>
+                <Select
+                  value={formData.selected_inverter_model}
+                  onValueChange={(value) => setFormData({ ...formData, selected_inverter_model: value })}
+                >
                   <SelectTrigger id="inverter_model" className="flex-1">
-                    <SelectValue placeholder="Select or type..." />
+                    <SelectValue placeholder="Select from list" />
                   </SelectTrigger>
                   <SelectContent>
                     {products
@@ -239,8 +261,8 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
               </div>
               <Input
                 placeholder="Or type custom model"
-                value={formData.inverter_model}
-                onChange={(e) => setFormData({ ...formData, inverter_model: e.target.value })}
+                value={formData.custom_inverter_model}
+                onChange={(e) => setFormData({ ...formData, custom_inverter_model: e.target.value })}
                 className="mt-2"
               />
             </div>
@@ -259,8 +281,11 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
           </div>
 
           <div>
-            <Label htmlFor="priority">Priority</Label>
-            <Select value={formData.priority} onValueChange={(value) => setFormData({ ...formData, priority: value })}>
+            <Label htmlFor="priority">Priority *</Label>
+            <Select
+              value={formData.priority}
+              onValueChange={(value) => setFormData({ ...formData, priority: value as HomeServiceFormData['priority'] })}
+            >
               <SelectTrigger id="priority">
                 <SelectValue />
               </SelectTrigger>

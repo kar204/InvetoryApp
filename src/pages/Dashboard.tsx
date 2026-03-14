@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Wrench, Package, TrendingUp, Download, Activity, ShoppingCart, Recycle, CheckCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Wrench, Package, TrendingUp, Download, Activity, ShoppingCart, Recycle, CheckCircle, Battery, Zap, Plug, ShoppingCart as Cart, Sun, Box, Settings } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { StatsCard } from '@/components/dashboard/StatsCard';
 import { RecentTickets } from '@/components/dashboard/RecentTickets';
@@ -15,6 +16,7 @@ import { usePollingRefresh } from '@/hooks/usePollingRefresh';
 
 export default function Dashboard() {
   const { profile } = useAuth();
+  const navigate = useNavigate();
   const [stats, setStats] = useState({
     openTickets: 0,
     closedToday: 0,
@@ -251,6 +253,15 @@ export default function Dashboard() {
   // Fallback polling (helps when realtime is delayed or client missed an event)
   usePollingRefresh(fetchDashboardData, 30000);
 
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  };
+
+  const greeting = getGreeting();
+
   if (loading) {
     return (
       <AppLayout>
@@ -302,19 +313,25 @@ export default function Dashboard() {
     <AppLayout>
       <div className="space-y-8 animate-in fade-in duration-300 gpu-smooth">
         {/* Header */}
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white drop-shadow-md">
-              Welcome back, <span className="bg-gradient-to-r from-[#4F8CFF] to-emerald-400 bg-clip-text text-transparent">{profile?.name || 'User'}</span>
-            </h1>
-            <p className="text-slate-600 dark:text-slate-400 mt-1 text-sm">
-              Here’s your latest snapshot of today’s activity.
-            </p>
+        <div className="flex flex-col gap-6 mb-8">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between px-1">
+            <div>
+              <h1 className="text-4xl font-black tracking-tight text-slate-900 dark:text-white drop-shadow-lg">
+                {greeting}, <span className="bg-gradient-to-r from-[#4F8CFF] via-[#7487FF] to-[#22C55E] bg-clip-text text-transparent capitalize">{profile?.name || 'User'}</span>
+              </h1>
+              <p className="text-slate-600 dark:text-slate-500 mt-2 text-[15px] font-medium flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Everything looks stable. Here is your latest business snapshot.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button variant="outline" onClick={handleExportDashboard} className="rounded-xl border-slate-200 dark:border-white/10 bg-white/50 dark:bg-[#1B2438]/50 hover:bg-white dark:hover:bg-[#1B2438] text-slate-900 dark:text-white backdrop-blur-md transition-all duration-200 shadow-sm hover:shadow-md hover:scale-[1.02]">
+                <Download className="h-4 w-4 mr-2 text-[#4F8CFF]" />
+                Export Data
+              </Button>
+            </div>
           </div>
-          <Button variant="outline" onClick={handleExportDashboard} className="rounded-xl border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-[#1B2438]/50 hover:bg-slate-100 dark:bg-[#1B2438] text-slate-900 dark:text-white backdrop-blur-md transition-all duration-150 ease-out shadow-md">
-            <Download className="h-4 w-4 mr-2 text-[#4F8CFF]" />
-            Export Report
-          </Button>
+
         </div>
 
         {/* Hero Metrics */}
@@ -336,7 +353,7 @@ export default function Dashboard() {
             trendValue={`Closed ${stats.closedToday} / Open ${stats.openTickets}`}
           />
           <StatsCard
-            title="Total Sale Count of Products"
+            title="Sales Today"
             value={stats.todaySalesCount}
             icon={TrendingUp}
             variant="success"
@@ -353,7 +370,7 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Category-wise Stock Breakdown — full width */}
+        {/* Category-wise Stock Breakdown - full width */}
         <div className="glass-card rounded-2xl p-6 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 shadow-md hover:shadow-xl hover:border-[#4F8CFF]/30 transition-all duration-150 ease-out gpu-smooth">
           <div className="flex items-center gap-3 mb-5">
             <div className="h-8 w-8 rounded-xl bg-[#4F8CFF]/10 flex items-center justify-center">
@@ -374,21 +391,21 @@ export default function Dashboard() {
               const count = stats.categoryStock[cat] || 0;
               const maxCount = Math.max(...Object.values(stats.categoryStock), 1);
               const pct = Math.round((count / maxCount) * 100);
-              const catColors: Record<string, { bg: string, text: string, bar: string, icon: string }> = {
-                'Battery': { bg: 'bg-blue-500/10', text: 'text-blue-400', bar: 'bg-blue-500', icon: '🔋' },
-                'Inverter': { bg: 'bg-violet-500/10', text: 'text-violet-400', bar: 'bg-violet-500', icon: '⚡' },
-                'UPS': { bg: 'bg-emerald-500/10', text: 'text-emerald-400', bar: 'bg-emerald-500', icon: '🔌' },
-                'Trolly': { bg: 'bg-amber-500/10', text: 'text-amber-400', bar: 'bg-amber-500', icon: '🛒' },
-                'Solar Panel': { bg: 'bg-orange-500/10', text: 'text-orange-400', bar: 'bg-orange-500', icon: '☀️' },
-                'Charger': { bg: 'bg-rose-500/10', text: 'text-rose-400', bar: 'bg-rose-500', icon: '🔌' },
-                'SMF': { bg: 'bg-cyan-500/10', text: 'text-cyan-400', bar: 'bg-cyan-500', icon: '📦' },
-                'Spares': { bg: 'bg-slate-500/10', text: 'text-slate-300 dark:text-slate-200', bar: 'bg-slate-400', icon: 'SP' },
+              const catColors: Record<string, { bg: string, text: string, bar: string, icon: React.ReactNode }> = {
+                'Battery': { bg: 'bg-blue-500/10', text: 'text-blue-400', bar: 'bg-blue-500', icon: <Battery className="w-5 h-5 text-blue-500" /> },
+                'Inverter': { bg: 'bg-violet-500/10', text: 'text-violet-400', bar: 'bg-violet-500', icon: <Zap className="w-5 h-5 text-violet-500" /> },
+                'UPS': { bg: 'bg-emerald-500/10', text: 'text-emerald-400', bar: 'bg-emerald-500', icon: <Plug className="w-5 h-5 text-emerald-500" /> },
+                'Trolly': { bg: 'bg-amber-500/10', text: 'text-amber-400', bar: 'bg-amber-500', icon: <Cart className="w-5 h-5 text-amber-500" /> },
+                'Solar Panel': { bg: 'bg-orange-500/10', text: 'text-orange-400', bar: 'bg-orange-500', icon: <Sun className="w-5 h-5 text-orange-500" /> },
+                'Charger': { bg: 'bg-rose-500/10', text: 'text-rose-400', bar: 'bg-rose-500', icon: <Plug className="w-5 h-5 text-rose-500" /> },
+                'SMF': { bg: 'bg-cyan-500/10', text: 'text-cyan-400', bar: 'bg-cyan-500', icon: <Box className="w-5 h-5 text-cyan-500" /> },
+                'Spares': { bg: 'bg-slate-500/10', text: 'text-slate-300 dark:text-slate-200', bar: 'bg-slate-400', icon: <Settings className="w-5 h-5 text-slate-400" /> },
               };
-              const style = catColors[cat] || { bg: 'bg-slate-500/10', text: 'text-slate-400', bar: 'bg-slate-500', icon: '📦' };
+              const style = catColors[cat] || { bg: 'bg-slate-500/10', text: 'text-slate-400', bar: 'bg-slate-500', icon: <Package className="w-5 h-5 text-slate-400" /> };
               return (
                 <div key={cat} className={`${style.bg} min-w-[185px] shrink-0 rounded-xl p-4 flex flex-col gap-2 border border-white/5 hover:scale-[1.02] transition-transform duration-200`}>
                   <div className="flex items-center justify-between">
-                    <span className="text-lg">{style.icon}</span>
+                    <span className="text-lg flex items-center justify-center">{style.icon}</span>
                     <span className={`text-[10px] font-bold uppercase tracking-wider ${style.text}`}>{cat}</span>
                   </div>
                   <div className={`text-3xl font-bold ${style.text}`}>{count}</div>
@@ -419,12 +436,12 @@ export default function Dashboard() {
                     <button
                       key={r}
                       onClick={() => setSalesRange(r)}
-                      className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded-md transition-all duration-200 ${salesRange === r
+                      className={`px-3 py-1 text-[10px] font-bold uppercase rounded-md transition-all duration-200 ${salesRange === r
                           ? 'bg-[#4F8CFF] text-white shadow-sm'
                           : 'text-slate-500 hover:text-slate-800 dark:hover:text-white'
                         }`}
                     >
-                      {r === 'quarter' ? 'Qtr' : r.charAt(0).toUpperCase() + r.slice(1, 3)}
+                      {r === 'day' ? 'Day' : r === 'week' ? 'Week' : r === 'month' ? 'Month' : r === 'quarter' ? 'Quarter' : 'Year'}
                     </button>
                   ))}
                 </div>

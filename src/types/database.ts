@@ -6,6 +6,10 @@ export type TransactionType = 'IN' | 'OUT';
 
 export type StockSource = 'SUPPLIER' | 'WAREHOUSE';
 
+export type SecondHandTransactionType = 'SALE' | 'RENT_OUT' | 'GOOD_WILL';
+
+export type SecondHandLifecycleStatus = 'SOLD' | 'ACTIVE' | 'PARTIALLY_RETURNED' | 'RETURNED';
+
 export interface Profile {
   id: string;
   user_id: string;
@@ -93,6 +97,33 @@ export interface StockTransaction {
   product?: Product;
 }
 
+export interface SecondHandLifecycleRecord {
+  id: string;
+  transaction_group_id: string;
+  transaction_type: SecondHandTransactionType;
+  lifecycle_status: SecondHandLifecycleStatus;
+  customer_name: string;
+  mobile_number: string | null;
+  address: string | null;
+  product_id: string;
+  product_name: string;
+  product_model: string;
+  product_category: string;
+  quantity: number;
+  returned_quantity: number;
+  unit_price: number;
+  payment_method: 'CASH' | 'CARD' | 'UPI' | null;
+  start_date: string | null;
+  end_date: string | null;
+  remarks: string | null;
+  returned_at: string | null;
+  return_remarks: string | null;
+  recorded_by: string;
+  created_at: string;
+  updated_at: string;
+  product?: Product | null;
+}
+
 export interface WarehouseSale {
   id: string;
   customer_name: string;
@@ -122,6 +153,7 @@ export interface HomeServiceRequest {
   address: string;
   battery_model: string | null;
   inverter_model: string | null;
+  spare_supplied: string | null;
   issue_description: string;
   status: ServiceStatus;
   priority: 'LOW' | 'MEDIUM' | 'HIGH';

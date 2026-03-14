@@ -44,6 +44,7 @@ const roleColors: Record<AppRole, string> = {
   sp_battery: 'bg-chart-2/20 text-chart-2 border-chart-2/30',
   sp_invertor: 'bg-chart-3/20 text-chart-3 border-chart-3/30',
   service_agent: 'bg-chart-2/20 text-chart-2 border-chart-2/30',
+  service_technician: 'bg-blue-500/20 text-blue-600 border-blue-500/30',
   warehouse_staff: 'bg-chart-1/20 text-chart-1 border-chart-1/30',
   procurement_staff: 'bg-chart-4/20 text-chart-4 border-chart-4/30',
   scrap_manager: 'bg-chart-3/20 text-chart-3 border-chart-3/30',

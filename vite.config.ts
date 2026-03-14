@@ -15,4 +15,15 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-}));
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor': ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query'],
+          'ui': ['class-variance-authority', 'tailwind-merge', 'clsx'],
+          'charts': ['recharts'],
+        },
+      },
+    },
+  },
+} as any));

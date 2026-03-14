@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Search, Filter, Download, Trash2, Phone, Battery, Zap, Wrench, ChevronRight } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { useLocation } from 'react-router-dom';
@@ -180,6 +180,24 @@ function HomeServiceAdminView({ homeSearch, onRefresh, externalRefreshTrigger = 
                   <span className="text-muted-foreground">Status:</span>
                   <p className="font-semibold">{selectedRequest.status}</p>
                 </div>
+                {selectedRequest.battery_model && (
+                  <div>
+                    <span className="text-muted-foreground">Battery Model:</span>
+                    <p className="font-semibold">{selectedRequest.battery_model}</p>
+                  </div>
+                )}
+                {selectedRequest.inverter_model && (
+                  <div>
+                    <span className="text-muted-foreground">Inverter Model:</span>
+                    <p className="font-semibold">{selectedRequest.inverter_model}</p>
+                  </div>
+                )}
+                {selectedRequest.spare_supplied && (
+                  <div>
+                    <span className="text-muted-foreground">Spare Supplied:</span>
+                    <p className="font-semibold">{selectedRequest.spare_supplied}</p>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -250,13 +268,19 @@ function HomeServiceCounterStaffView({ homeSearch, externalRefreshTrigger = 0 }:
       return;
     }
 
-    supabase
-      .from('profiles')
-      .select('name')
-      .eq('user_id', assignedId)
-      .maybeSingle()
-      .then(({ data }) => setAssignedTechnicianName(data?.name ?? 'Technician'))
-      .catch(() => setAssignedTechnicianName('Technician'));
+    void (async () => {
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('name')
+          .eq('user_id', assignedId)
+          .maybeSingle();
+
+        setAssignedTechnicianName(data?.name ?? 'Technician');
+      } catch {
+        setAssignedTechnicianName('Technician');
+      }
+    })();
   }, [selectedRequest?.assigned_to]);
 
   return (
@@ -292,6 +316,24 @@ function HomeServiceCounterStaffView({ homeSearch, externalRefreshTrigger = 0 }:
                   <span className="text-muted-foreground">Status:</span>
                   <p className="font-semibold">{selectedRequest.status}</p>
                 </div>
+                {selectedRequest.battery_model && (
+                  <div>
+                    <span className="text-muted-foreground">Battery Model:</span>
+                    <p className="font-semibold">{selectedRequest.battery_model}</p>
+                  </div>
+                )}
+                {selectedRequest.inverter_model && (
+                  <div>
+                    <span className="text-muted-foreground">Inverter Model:</span>
+                    <p className="font-semibold">{selectedRequest.inverter_model}</p>
+                  </div>
+                )}
+                {selectedRequest.spare_supplied && (
+                  <div>
+                    <span className="text-muted-foreground">Spare Supplied:</span>
+                    <p className="font-semibold">{selectedRequest.spare_supplied}</p>
+                  </div>
+                )}
                 <div>
                   <span className="text-muted-foreground">Assigned:</span>
                   <p className="font-semibold">{selectedRequest.assigned_to ? assignedTechnicianName : 'Not yet'}</p>
@@ -361,6 +403,12 @@ function HomeServiceTechnicianView({ homeSearch, onRefresh, externalRefreshTrigg
                   <div>
                     <span className="text-muted-foreground">Inverter Model:</span>
                     <p className="font-semibold">{selectedRequest.inverter_model}</p>
+                  </div>
+                )}
+                {selectedRequest.spare_supplied && (
+                  <div>
+                    <span className="text-muted-foreground">Spare Supplied:</span>
+                    <p className="font-semibold">{selectedRequest.spare_supplied}</p>
                   </div>
                 )}
                 <div>
@@ -477,6 +525,7 @@ export default function Services() {
     const qParam = (params.get('q') || '').trim();
 
     const normalizedTab = tabParam === 'in-shop' || tabParam === 'home-service' ? tabParam : null;
+    const action = params.get('action');
 
     if (!isServiceTechnician && normalizedTab) {
       setActiveTab(normalizedTab);
@@ -485,6 +534,8 @@ export default function Services() {
     const effectiveTab = normalizedTab ?? (isServiceTechnician ? 'home-service' : 'in-shop');
     if (effectiveTab === 'in-shop') setSearch(qParam);
     else setHomeSearch(qParam);
+
+    if (action === 'create') setIsCreateOpen(true);
   }, [location.search, isServiceTechnician]);
 
   const fetchTickets = async () => {
