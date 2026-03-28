@@ -28,6 +28,10 @@ export default function Dashboard() {
     homeClosedToday: 0,
     todaySalesCount: 0,
     todaySalesRevenue: 0,
+    weekSalesCount: 0,
+    weekSalesRevenue: 0,
+    monthSalesCount: 0,
+    monthSalesRevenue: 0,
     scrapInCount: 0,
     scrapInValue: 0,
     todayStockIn: 0,
@@ -165,6 +169,12 @@ export default function Dashboard() {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
+      const weekStart = new Date(today);
+      weekStart.setDate(today.getDate() - 7);
+
+      const monthStart = new Date(today);
+      monthStart.setDate(1);
+
       const [
         ticketsRes,
         openRes,
@@ -175,6 +185,8 @@ export default function Dashboard() {
         homeClosedTodayRes,
         stockRes,
         todaySalesRes,
+        weekSalesRes,
+        monthSalesRes,
         scrapRes,
         todayStockInRes,
         todayStockOutRes,
@@ -188,6 +200,8 @@ export default function Dashboard() {
         supabase.from('home_service_requests').select('id', { count: 'exact' }).eq('status', 'CLOSED').gte('updated_at', today.toISOString()),
         supabase.from('warehouse_stock').select('*, product:products(*)'),
         supabase.from('warehouse_sales').select('id').gte('created_at', today.toISOString()),
+        supabase.from('warehouse_sales').select('id').gte('created_at', weekStart.toISOString()),
+        supabase.from('warehouse_sales').select('id').gte('created_at', monthStart.toISOString()),
         supabase.from('scrap_entries').select('scrap_value, status, quantity'),
         supabase.from('stock_transactions').select('quantity').eq('transaction_type', 'IN').gte('created_at', today.toISOString()),
         supabase.from('stock_transactions').select('quantity').eq('transaction_type', 'OUT').gte('created_at', today.toISOString()),
@@ -204,7 +218,7 @@ export default function Dashboard() {
         categoryStock[cat] = (categoryStock[cat] || 0) + s.quantity;
       });
 
-      // Today's sales revenue: fetch sale items for today's sales
+      // Today's sales
       const todaySaleIds = (todaySalesRes.data || []).map((s: any) => s.id);
       let todaySalesRevenue = 0;
       let todayUnitsSold = 0;
@@ -212,6 +226,26 @@ export default function Dashboard() {
         const { data: saleItems } = await supabase.from('warehouse_sale_items').select('price, quantity').in('sale_id', todaySaleIds);
         todaySalesRevenue = (saleItems || []).reduce((acc: number, item: any) => acc + ((item.price || 0) * (item.quantity || 1)), 0);
         todayUnitsSold = (saleItems || []).reduce((acc: number, item: any) => acc + (item.quantity || 0), 0);
+      }
+
+      // Week's sales
+      const weekSaleIds = (weekSalesRes.data || []).map((s: any) => s.id);
+      let weekSalesRevenue = 0;
+      let weekUnitsSold = 0;
+      if (weekSaleIds.length > 0) {
+        const { data: saleItems } = await supabase.from('warehouse_sale_items').select('price, quantity').in('sale_id', weekSaleIds);
+        weekSalesRevenue = (saleItems || []).reduce((acc: number, item: any) => acc + ((item.price || 0) * (item.quantity || 1)), 0);
+        weekUnitsSold = (saleItems || []).reduce((acc: number, item: any) => acc + (item.quantity || 0), 0);
+      }
+
+      // Month's sales
+      const monthSaleIds = (monthSalesRes.data || []).map((s: any) => s.id);
+      let monthSalesRevenue = 0;
+      let monthUnitsSold = 0;
+      if (monthSaleIds.length > 0) {
+        const { data: saleItems } = await supabase.from('warehouse_sale_items').select('price, quantity').in('sale_id', monthSaleIds);
+        monthSalesRevenue = (saleItems || []).reduce((acc: number, item: any) => acc + ((item.price || 0) * (item.quantity || 1)), 0);
+        monthUnitsSold = (saleItems || []).reduce((acc: number, item: any) => acc + (item.quantity || 0), 0);
       }
 
       const scrapEntries = (scrapRes.data || []) as any[];
@@ -233,6 +267,10 @@ export default function Dashboard() {
         homeClosedToday: homeClosedTodayRes.data?.length || homeClosedTodayRes.count || 0,
         todaySalesCount: todayUnitsSold,
         todaySalesRevenue,
+        weekSalesCount: weekUnitsSold,
+        weekSalesRevenue,
+        monthSalesCount: monthUnitsSold,
+        monthSalesRevenue,
         scrapInCount,
         scrapInValue,
         todayStockIn,
@@ -335,7 +373,7 @@ export default function Dashboard() {
         </div>
 
         {/* Hero Metrics */}
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 sm:gap-6 grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
           <StatsCard
             title="Active Tickets"
             value={stats.openTickets + stats.inProgressTickets}
@@ -345,12 +383,12 @@ export default function Dashboard() {
             trendValue={`${stats.closedToday} closed`}
           />
           <StatsCard
-            title="Closed vs Open Today"
+            title="Closed Today"
             value={stats.closedToday}
             icon={CheckCircle}
             variant="primary"
             trend={stats.closedToday > 0 ? "up" : "neutral"}
-            trendValue={`Closed ${stats.closedToday} / Open ${stats.openTickets}`}
+            trendValue={`${stats.openTickets} open`}
           />
           <StatsCard
             title="Sales Today"
@@ -358,10 +396,26 @@ export default function Dashboard() {
             icon={TrendingUp}
             variant="success"
             trend={stats.todaySalesCount > 0 ? "up" : "neutral"}
-            trendValue={`${stats.todaySalesCount} units sold`}
+            trendValue={`₹${stats.todaySalesRevenue.toLocaleString('en-IN')}`}
           />
           <StatsCard
-            title="Scrap In / Out"
+            title="Sales This Week"
+            value={stats.weekSalesCount}
+            icon={TrendingUp}
+            variant="success"
+            trend={stats.weekSalesCount > 0 ? "up" : "neutral"}
+            trendValue={`₹${stats.weekSalesRevenue.toLocaleString('en-IN')}`}
+          />
+          <StatsCard
+            title="Sales This Month"
+            value={stats.monthSalesCount}
+            icon={TrendingUp}
+            variant="success"
+            trend={stats.monthSalesCount > 0 ? "up" : "neutral"}
+            trendValue={`₹${stats.monthSalesRevenue.toLocaleString('en-IN')}`}
+          />
+          <StatsCard
+            title="Scrap In Stock"
             value={stats.scrapInCount}
             icon={Recycle}
             variant="secondary"

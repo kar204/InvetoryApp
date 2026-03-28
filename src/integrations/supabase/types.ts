@@ -971,32 +971,30 @@ export type Database = {
       }
       rent_aged_battery: {
         Args: {
-          p_battery_id: string
-          p_customer_id: string
-          p_user: string
+          p_aged_id: string
+          p_customer: string
         }
         Returns: { success: boolean; message: string }
       }
       return_aged_battery: {
         Args: {
-          p_battery_id: string
-          p_user: string
+          p_aged_id: string
         }
         Returns: { success: boolean; message: string }
       }
       scrap_aged_battery: {
         Args: {
           p_aged_id: string
+          p_remarks: string
+          p_scrap_value: number
           p_user: string
         }
         Returns: { success: boolean; message: string }
       }
       sell_aged_battery: {
         Args: {
-          p_battery_id: string
-          p_customer_id: string
-          p_notes: string
-          p_user: string
+          p_aged_id: string
+          p_customer: string
         }
         Returns: { success: boolean; message: string }
       }
@@ -1010,6 +1008,20 @@ export type Database = {
       delete_scrap_entry: {
         Args: {
           p_scrap_id: string
+        }
+        Returns: { success: boolean; message: string }
+      }
+      reverse_sale: {
+        Args: {
+          p_aged_id: string
+          p_user: string
+        }
+        Returns: { success: boolean; message: string }
+      }
+      reverse_rental: {
+        Args: {
+          p_rental_id: string
+          p_user: string
         }
         Returns: { success: boolean; message: string }
       }

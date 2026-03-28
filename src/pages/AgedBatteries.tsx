@@ -91,7 +91,7 @@ export default function AgedBatteries() {
   const isAdmin = hasRole('admin');
   const canManage = hasAnyRole(['admin', 'warehouse_staff']);
 
-  const [activeTab, setActiveTab] = useState<'inventory' | 'transfer' | 'rentals' | 'analytics'>('inventory');
+  const [activeTab, setActiveTab] = useState<'inventory' | 'transfer' | 'transactions' | 'rentals' | 'analytics'>('inventory');
 
   const [agedBatteries, setAgedBatteries] = useState<AgedBattery[]>([]);
   const [rentals, setRentals] = useState<AgedBatteryRental[]>([]);
@@ -622,10 +622,8 @@ export default function AgedBatteries() {
     setProcessing(true);
     try {
       const payload = {
-        p_battery_id: selectedBattery.id,
-        p_customer_id: customerId,
-        p_notes: sellForm.notes || 'Sold',
-        p_user: user.id
+        p_aged_id: selectedBattery.id,
+        p_customer: customerId
       };
 
       const { error } = await retryRpc(() =>
@@ -691,9 +689,8 @@ export default function AgedBatteries() {
     setProcessing(true);
     try {
       const payload = {
-        p_battery_id: selectedBattery.id,
-        p_customer_id: customerId,
-        p_user: user.id
+        p_aged_id: selectedBattery.id,
+        p_customer: customerId
       };
 
       const { error } = await retryRpc(() =>
@@ -726,8 +723,7 @@ export default function AgedBatteries() {
     setProcessing(true);
     try {
       const payload = {
-        p_battery_id: battery.id,
-        p_user: user.id
+        p_aged_id: battery.id
       };
 
       const { error } = await retryRpc(() =>
@@ -764,9 +760,9 @@ export default function AgedBatteries() {
     try {
       const payload = {
         p_aged_id: selectedBattery.id,
-        p_user: user.id,
+        p_remarks: scrapForm.remarks || '',
         p_scrap_value: parseFloat(scrapForm.scrap_value) || 0,
-        p_remarks: scrapForm.remarks || ''
+        p_user: user.id
       };
 
       const { error } = await retryRpc(() =>
@@ -826,6 +822,48 @@ export default function AgedBatteries() {
   const canScrap = (status: AgedBatteryStatus) => status !== 'RENTED';
   const canSell = (status: AgedBatteryStatus) => status === 'IN_STOCK' || status === 'RETURNED';
 
+  const handleDeleteSale = async (battery: AgedBattery) => {
+    if (!user?.id || !isAdmin) return;
+    if (!confirm('This will reverse the sale and return battery to IN_STOCK. Continue?')) return;
+
+    setProcessing(true);
+    try {
+      const { error } = await supabase.rpc('reverse_sale', {
+        p_aged_id: battery.id,
+        p_user: user.id
+      });
+      if (error) throw error;
+      toast({ title: 'Sale reversed', description: 'Battery returned to stock' });
+      fetchData();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Failed to reverse sale';
+      toast({ title: 'Error', description: msg, variant: 'destructive' });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleDeleteRental = async (rental: AgedBatteryRental) => {
+    if (!user?.id || !isAdmin) return;
+    if (!confirm('This will reverse the rental and return battery to IN_STOCK. Continue?')) return;
+
+    setProcessing(true);
+    try {
+      const { error } = await supabase.rpc('reverse_rental', {
+        p_rental_id: rental.id,
+        p_user: user.id
+      });
+      if (error) throw error;
+      toast({ title: 'Rental reversed', description: 'Battery returned to stock' });
+      fetchData();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Failed to reverse rental';
+      toast({ title: 'Error', description: msg, variant: 'destructive' });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const analyticsCounts = {
     total: agedBatteries.length,
     inStock: agedBatteries.filter(b => b.status === 'IN_STOCK').length,
@@ -839,6 +877,7 @@ export default function AgedBatteries() {
 
   const activeRentals = rentals.filter(r => r.status === 'ACTIVE');
   const returnedRentals = rentals.filter(r => r.status === 'RETURNED');
+  const soldBatteries = agedBatteries.filter(b => b.status === 'SOLD');
 
   useEffect(() => {
     if (isTransferOpen && scannerInputRef.current) {
@@ -860,6 +899,7 @@ export default function AgedBatteries() {
           <TabsList className="bg-muted/50">
             <TabsTrigger value="inventory">Inventory</TabsTrigger>
             <TabsTrigger value="transfer">Transfer Batch</TabsTrigger>
+            <TabsTrigger value="transactions">Sales</TabsTrigger>
             <TabsTrigger value="rentals">Rentals</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
           </TabsList>
@@ -1265,6 +1305,59 @@ export default function AgedBatteries() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="transactions" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ShoppingCart className="h-5 w-5 text-emerald-500" />
+                  Sales Transactions ({soldBatteries.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {soldBatteries.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">No sales yet</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Barcode</TableHead>
+                          <TableHead>Product</TableHead>
+                          <TableHead>Customer</TableHead>
+                          <TableHead>Date</TableHead>
+                          {isAdmin && <TableHead className="w-[80px]">Action</TableHead>}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {soldBatteries.map((battery) => (
+                          <TableRow key={battery.id}>
+                            <TableCell className="font-mono">{battery.barcode}</TableCell>
+                            <TableCell>{battery.product?.name}</TableCell>
+                            <TableCell>{battery.customer?.name || 'N/A'}</TableCell>
+                            <TableCell>{format(new Date(battery.created_at), 'dd MMM yyyy')}</TableCell>
+                            {isAdmin && (
+                              <TableCell>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleDeleteSale(battery)}
+                                  disabled={processing}
+                                  className="text-red-500 hover:text-red-600"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </TableCell>
+                            )}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="rentals" className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2">
               <Card>
@@ -1291,7 +1384,20 @@ export default function AgedBatteries() {
                                 {rental.aged_battery?.product?.name}
                               </div>
                             </div>
-                            <Badge className="bg-purple-500/10 text-purple-500">Active</Badge>
+                            <div className="flex items-center gap-2">
+                              <Badge className="bg-purple-500/10 text-purple-500">Active</Badge>
+                              {isAdmin && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleDeleteRental(rental)}
+                                  disabled={processing}
+                                  className="text-red-500 hover:text-red-600 h-6 px-2"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </div>
                           </div>
                           <div className="mt-2 flex items-center gap-4 text-sm text-muted-foreground">
                             <span>{format(new Date(rental.rented_at), 'dd MMM yyyy')}</span>
