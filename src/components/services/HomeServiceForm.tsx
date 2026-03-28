@@ -33,6 +33,7 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productsLoading, setProductsLoading] = useState(false);
 
   const initialFormData: HomeServiceFormData = {
     customer_name: '',
@@ -54,16 +55,22 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
 
   const fetchProducts = async () => {
     try {
+      setProductsLoading(true);
       const { data } = await supabase.from('products').select('*');
       setProducts((data || []) as Product[]);
     } catch (error) {
       console.error('Error fetching products:', error);
+    } finally {
+      setProductsLoading(false);
     }
   };
 
   const resolveModelValue = (customValue: string, selectedValue: string) => {
-    const trimmedCustomValue = customValue.trim();
-    return trimmedCustomValue || selectedValue.trim();
+    const trimmedCustom = customValue.trim();
+    const trimmedSelected = selectedValue.trim();
+    if (trimmedCustom) return trimmedCustom;
+    if (trimmedSelected && trimmedSelected !== 'none') return trimmedSelected;
+    return '';
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -220,6 +227,7 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
                     <SelectValue placeholder="Select from list" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
                     {products
                       .filter((p) => p.category === 'Battery')
                       .map((product) => (
@@ -249,6 +257,7 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
                     <SelectValue placeholder="Select from list" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
                     {products
                       .filter((p) => p.category === 'Inverter')
                       .map((product) => (

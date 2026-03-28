@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Recycle, PackageOpen, Check, TrendingUp, TrendingDown } from 'lucide-react';
+import { Search, Recycle, PackageOpen, Check, TrendingUp, TrendingDown, Trash2 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -49,6 +49,7 @@ export default function Scrap() {
   const [search, setSearch] = useState('');
   const [isRecordOpen, setIsRecordOpen] = useState(false);
   const [entryToMarkOut, setEntryToMarkOut] = useState<ScrapEntry | null>(null);
+  const [entryToDelete, setEntryToDelete] = useState<ScrapEntry | null>(null);
 
   const [form, setForm] = useState({ customer_name: '', scrap_item: '', scrap_model: '', scrap_value: '', quantity: '1' });
 
@@ -108,6 +109,30 @@ export default function Scrap() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!entryToDelete) return;
+    try {
+      console.log("RPC DELETE SCRAP:", { p_scrap_id: entryToDelete.id });
+      
+      const { data, error } = await supabase.rpc('delete_scrap_entry', {
+        p_scrap_id: entryToDelete.id
+      });
+      
+      if (error) {
+        console.error("Delete scrap failed:", error);
+        throw error;
+      }
+      
+      console.log("Delete scrap response:", data);
+      toast({ title: 'Scrap entry deleted' });
+      setEntryToDelete(null);
+      fetchEntries();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'An error occurred';
+      toast({ title: 'Error', description: msg, variant: 'destructive' });
+    }
+  };
+
   const inEntries = entries.filter(e => e.status === 'IN' && (
     e.customer_name.toLowerCase().includes(search.toLowerCase()) ||
     e.scrap_item.toLowerCase().includes(search.toLowerCase()) ||
@@ -134,13 +159,13 @@ export default function Scrap() {
             <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs text-right py-4">Value (₹)</TableHead>
             <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs py-4">Date</TableHead>
             <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs py-4">Status</TableHead>
-            {showMarkOut && canManage && <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs w-[120px] py-4">Action</TableHead>}
+            {canManage && <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs w-[180px] py-4">Action</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
           {items.length === 0 ? (
             <TableRow className="border-slate-200 dark:border-white/5">
-              <TableCell colSpan={showMarkOut && canManage ? 8 : 7} className="text-center text-slate-600 dark:text-slate-500 py-12 font-medium">
+              <TableCell colSpan={canManage ? 8 : 7} className="text-center text-slate-600 dark:text-slate-500 py-12 font-medium">
                 No entries found
               </TableCell>
             </TableRow>
@@ -157,11 +182,18 @@ export default function Scrap() {
                   {entry.status}
                 </Badge>
               </TableCell>
-              {showMarkOut && canManage && (
+              {canManage && (
                 <TableCell>
-                  <Button variant="outline" size="sm" onClick={() => setEntryToMarkOut(entry)} className="opacity-0 group-hover:opacity-100 transition-opacity bg-transparent hover:bg-emerald-500/10 hover:text-emerald-400 border-slate-200 dark:border-white/10 hover:border-emerald-500/30">
-                    <Check className="h-4 w-4 mr-1" /> Mark Out
-                  </Button>
+                  <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {showMarkOut && (
+                      <Button variant="outline" size="sm" onClick={() => setEntryToMarkOut(entry)} className="bg-transparent hover:bg-emerald-500/10 hover:text-emerald-400 border-slate-200 dark:border-white/10 hover:border-emerald-500/30">
+                        <Check className="h-4 w-4 mr-1" /> Mark Out
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => setEntryToDelete(entry)} className="bg-transparent hover:bg-red-500/10 hover:text-red-400 border-slate-200 dark:border-white/10 hover:border-red-500/30">
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </TableCell>
               )}
             </TableRow>
@@ -290,6 +322,22 @@ export default function Scrap() {
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
               <AlertDialogAction onClick={handleMarkOut}>Confirm</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Delete Confirmation */}
+        <AlertDialog open={!!entryToDelete} onOpenChange={() => setEntryToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Scrap Entry?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete "{entryToDelete?.scrap_item} - {entryToDelete?.scrap_model}" ({entryToDelete?.quantity} units). This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleDelete} className="bg-red-500 hover:bg-red-600">Delete</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

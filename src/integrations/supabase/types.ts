@@ -748,6 +748,189 @@ export type Database = {
           },
         ]
       }
+      aged_batteries: {
+        Row: {
+          id: string
+          product_id: string
+          barcode: string
+          batch_id: string | null
+          transfer_transaction_id: string | null
+          claimed: boolean
+          status: "IN_STOCK" | "RENTED" | "RETURNED" | "SOLD" | "SCRAPPED"
+          customer_id: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          product_id: string
+          barcode: string
+          batch_id?: string | null
+          transfer_transaction_id?: string | null
+          claimed?: boolean
+          status?: "IN_STOCK" | "RENTED" | "RETURNED" | "SOLD" | "SCRAPPED"
+          customer_id?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          product_id?: string
+          barcode?: string
+          batch_id?: string | null
+          transfer_transaction_id?: string | null
+          claimed?: boolean
+          status?: "IN_STOCK" | "RENTED" | "RETURNED" | "SOLD" | "SCRAPPED"
+          customer_id?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "aged_batteries_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "aged_batteries_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "aged_transfer_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "aged_batteries_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      aged_transfer_batches: {
+        Row: {
+          id: string
+          batch_name: string | null
+          notes: string | null
+          status: "OPEN" | "COMPLETED" | "CANCELLED"
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          batch_name?: string | null
+          notes?: string | null
+          status?: "OPEN" | "COMPLETED" | "CANCELLED"
+          created_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          batch_name?: string | null
+          notes?: string | null
+          status?: "OPEN" | "COMPLETED" | "CANCELLED"
+          created_by?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      aged_battery_rentals: {
+        Row: {
+          id: string
+          aged_battery_id: string
+          customer_id: string | null
+          rented_at: string
+          returned_at: string | null
+          status: "ACTIVE" | "RETURNED"
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          aged_battery_id: string
+          customer_id?: string | null
+          rented_at?: string
+          returned_at?: string | null
+          status?: "ACTIVE" | "RETURNED"
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          aged_battery_id?: string
+          customer_id?: string | null
+          rented_at?: string
+          returned_at?: string | null
+          status?: "ACTIVE" | "RETURNED"
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "aged_battery_rentals_aged_battery_id_fkey"
+            columns: ["aged_battery_id"]
+            isOneToOne: false
+            referencedRelation: "aged_batteries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      aged_battery_events: {
+        Row: {
+          id: string
+          aged_battery_id: string
+          event_type: string
+          performed_by: string | null
+          notes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          aged_battery_id: string
+          event_type: string
+          performed_by?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          aged_battery_id?: string
+          event_type?: string
+          performed_by?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      aged_scan_logs: {
+        Row: {
+          id: string
+          barcode: string | null
+          product_id: string | null
+          batch_id: string | null
+          scanned_by: string | null
+          scan_status: string | null
+          notes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          barcode?: string | null
+          product_id?: string | null
+          batch_id?: string | null
+          scanned_by?: string | null
+          scan_status?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          barcode?: string | null
+          product_id?: string | null
+          batch_id?: string | null
+          scanned_by?: string | null
+          scan_status?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -769,6 +952,66 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      transfer_aged_battery: {
+        Args: {
+          p_product_id: string
+          p_barcode: string
+          p_batch_id: string
+          p_user: string
+        }
+        Returns: { success: boolean; message: string; battery_id: string }
+      }
+      toggle_claim_status: {
+        Args: {
+          p_claim: boolean
+          p_id: string
+        }
+        Returns: { success: boolean; message: string; claimed: boolean }
+      }
+      rent_aged_battery: {
+        Args: {
+          p_battery_id: string
+          p_customer_id: string
+          p_user: string
+        }
+        Returns: { success: boolean; message: string }
+      }
+      return_aged_battery: {
+        Args: {
+          p_battery_id: string
+          p_user: string
+        }
+        Returns: { success: boolean; message: string }
+      }
+      scrap_aged_battery: {
+        Args: {
+          p_aged_id: string
+          p_user: string
+        }
+        Returns: { success: boolean; message: string }
+      }
+      sell_aged_battery: {
+        Args: {
+          p_battery_id: string
+          p_customer_id: string
+          p_notes: string
+          p_user: string
+        }
+        Returns: { success: boolean; message: string }
+      }
+      admin_delete_aged_battery: {
+        Args: {
+          p_aged_id: string
+          p_user: string
+        }
+        Returns: { success: boolean; message: string }
+      }
+      delete_scrap_entry: {
+        Args: {
+          p_scrap_id: string
+        }
+        Returns: { success: boolean; message: string }
       }
     }
     Enums: {

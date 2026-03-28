@@ -192,3 +192,61 @@ export interface Customer {
   created_at: string;
   updated_at: string;
 }
+
+export type AgedBatteryStatus = 'IN_STOCK' | 'RENTED' | 'RETURNED' | 'SOLD' | 'SCRAPPED';
+
+export interface AgedBattery {
+  id: string;
+  product_id: string;
+  barcode: string;
+  batch_id: string | null;
+  transfer_transaction_id: string | null;
+  claimed: boolean;
+  status: AgedBatteryStatus;
+  customer_id: string | null;
+  created_at: string;
+  product?: Product;
+  customer?: Customer;
+  batch?: AgedTransferBatch;
+}
+
+export interface AgedTransferBatch {
+  id: string;
+  batch_name: string | null;
+  notes: string | null;
+  status: 'OPEN' | 'COMPLETED' | 'CANCELLED';
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface AgedBatteryEvent {
+  id: string;
+  aged_battery_id: string;
+  event_type: string;
+  performed_by: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface AgedScanLog {
+  id: string;
+  barcode: string | null;
+  product_id: string | null;
+  batch_id: string | null;
+  scanned_by: string | null;
+  scan_status: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface AgedBatteryRental {
+  id: string;
+  aged_battery_id: string;
+  customer_id: string | null;
+  rented_at: string;
+  returned_at: string | null;
+  status: 'ACTIVE' | 'RETURNED';
+  created_at: string;
+  aged_battery?: AgedBattery;
+  customer?: Customer;
+}

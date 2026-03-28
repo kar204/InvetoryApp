@@ -946,6 +946,7 @@ export default function Inventory() {
                             <SelectValue placeholder="Select home technician or SP Invertor" />
                           </SelectTrigger>
                           <SelectContent>
+                            <SelectItem value="none">None</SelectItem>
                             {saleRecipients.length > 0 ? (
                               saleRecipients.map((recipient) => (
                                 <SelectItem key={recipient.user_id} value={recipient.user_id}>

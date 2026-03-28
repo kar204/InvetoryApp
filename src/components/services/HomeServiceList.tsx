@@ -17,10 +17,10 @@ interface HomeServiceListProps {
 }
 
 const statusColors: Record<string, string> = {
-  OPEN: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
-  IN_PROGRESS: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
-  RESOLVED: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
-  CLOSED: 'bg-slate-500/10 text-slate-500 border-slate-500/20',
+  OPEN: 'bg-amber-500/10 text-amber-500 border-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.2)]',
+  IN_PROGRESS: 'bg-[#4F8CFF]/10 text-[#4F8CFF] border-[#4F8CFF]/20 shadow-[0_0_10px_rgba(79,140,255,0.2)]',
+  RESOLVED: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 shadow-[0_0_10px_rgba(34,197,94,0.2)]',
+  CLOSED: 'bg-rose-500/10 text-rose-500 border-rose-500/20 shadow-[0_0_10px_rgba(244,63,94,0.2)]',
 };
 
 const priorityColors: Record<string, string> = {
@@ -246,6 +246,7 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
           ))}
         </div>
       )}
+      {/* pagination removed */}
     </div>
   );
 }

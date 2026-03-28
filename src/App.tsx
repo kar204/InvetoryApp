@@ -17,6 +17,7 @@ const Scrap = lazy(() => import("./pages/Scrap"));
 const Transactions = lazy(() => import("./pages/Transactions"));
 const Customers = lazy(() => import("./pages/Customers"));
 const Users = lazy(() => import("./pages/Users"));
+const AgedBatteries = lazy(() => import("./pages/AgedBatteries"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient({
@@ -61,6 +62,11 @@ const App = () => (
                 <Route path="/inventory" element={
                   <ProtectedRoute>
                     <Inventory />
+                  </ProtectedRoute>
+                } />
+                <Route path="/aged" element={
+                  <ProtectedRoute>
+                    <AgedBatteries />
                   </ProtectedRoute>
                 } />
                 <Route path="/second-hand" element={
