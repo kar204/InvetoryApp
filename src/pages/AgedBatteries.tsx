@@ -973,7 +973,12 @@ export default function AgedBatteries() {
                             )}
                           </TableCell>
                           <TableCell>
-                            {battery.customer?.name || '-'}
+                            {battery.customer ? (
+                              <div>
+                                <div className="font-medium">{battery.customer.name}</div>
+                                <div className="text-xs text-muted-foreground">{battery.customer.phone}</div>
+                              </div>
+                            ) : '-'}
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
@@ -1324,6 +1329,8 @@ export default function AgedBatteries() {
                           <TableHead>Barcode</TableHead>
                           <TableHead>Product</TableHead>
                           <TableHead>Customer</TableHead>
+                          <TableHead>Phone</TableHead>
+                          <TableHead>Address</TableHead>
                           <TableHead>Date</TableHead>
                           {isAdmin && <TableHead className="w-[80px]">Action</TableHead>}
                         </TableRow>
@@ -1334,6 +1341,8 @@ export default function AgedBatteries() {
                             <TableCell className="font-mono">{battery.barcode}</TableCell>
                             <TableCell>{battery.product?.name}</TableCell>
                             <TableCell>{battery.customer?.name || 'N/A'}</TableCell>
+                            <TableCell>{battery.customer?.phone || '-'}</TableCell>
+                            <TableCell className="max-w-[200px] truncate">{battery.customer?.address || '-'}</TableCell>
                             <TableCell>{format(new Date(battery.created_at), 'dd MMM yyyy')}</TableCell>
                             {isAdmin && (
                               <TableCell>
