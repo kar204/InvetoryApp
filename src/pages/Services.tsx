@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, Filter, Download, Trash2, Phone, Battery, Zap, Wrench, ChevronRight } from 'lucide-react';
+import { Plus, Search, Filter, Download, Trash2, Phone, Battery, Zap, Wrench, ChevronRight, X } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ import { downloadCSV, formatTicketForExport } from '@/utils/exportUtils';
 import { HomeServiceForm } from '@/components/services/HomeServiceForm';
 import { HomeServiceList } from '@/components/services/HomeServiceList';
 import { HomeServiceResolutionForm } from '@/components/services/HomeServiceResolutionForm';
+import { ModelSearchInput } from '@/components/ui/ModelSearchInput';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -475,6 +476,10 @@ export default function Services() {
   const [invertorResolved, setInvertorResolved] = useState<'yes' | 'no' | ''>('');
   const [invertorIssueDescription, setInvertorIssueDescription] = useState('');
   const [invertorPrice, setInvertorPrice] = useState('');
+  const [batteryItemPrices, setBatteryItemPrices] = useState<Record<string, string>>({});
+  const [batteryItemWarranty, setBatteryItemWarranty] = useState<Record<string, 'yes' | 'no'>>({});
+  const [inverterItemPrices, setInverterItemPrices] = useState<Record<string, string>>({});
+  const [inverterItemResolved, setInverterItemResolved] = useState<Record<string, 'yes' | 'no'>>({});
 
   // Close ticket state
   const [ticketToClose, setTicketToClose] = useState<ServiceTicket | null>(null);
@@ -488,6 +493,43 @@ export default function Services() {
     invertor_model: '',
     issue_description: '',
   });
+
+  // Multiple items state
+  const [ticketItems, setTicketItems] = useState<Array<{
+    item_type: 'BATTERY' | 'INVERTER';
+    model: string;
+    issue_description: string;
+    quantity: number;
+  }>>([]);
+
+  const [products, setProducts] = useState<Array<{ id: string; name: string; model: string; category: string }>>([]);
+
+  useEffect(() => {
+    const fetchProducts = async () => {
+      const { data } = await supabase.from('products').select('*');
+      setProducts(data || []);
+    };
+    fetchProducts();
+  }, []);
+
+  const addItem = (type: 'BATTERY' | 'INVERTER') => {
+    setTicketItems([...ticketItems, { 
+      item_type: type, 
+      model: '', 
+      issue_description: '', 
+      quantity: 1,
+    }]);
+  };
+
+  const removeItem = (index: number) => {
+    setTicketItems(ticketItems.filter((_, i) => i !== index));
+  };
+
+  const updateItem = (index: number, field: string, value: string | number | boolean) => {
+    const updated = [...ticketItems];
+    updated[index] = { ...updated[index], [field]: value };
+    setTicketItems(updated);
+  };
 
   const [showNewTicketPrint, setShowNewTicketPrint] = useState<ServiceTicket | null>(null);
   const [showClosedPrint, setShowClosedPrint] = useState<ServiceTicket | null>(null);
@@ -552,7 +594,30 @@ export default function Services() {
       const { data, error } = await query;
 
       if (error) throw error;
-      setTickets((data as ServiceTicket[]) || []);
+
+      // Fetch items for all tickets
+      const ticketIds = (data || []).map((t: any) => t.id);
+      let itemsMap: Record<string, any[]> = {};
+
+      if (ticketIds.length > 0) {
+        const { data: items } = await supabase
+          .from('service_ticket_items')
+          .select('*')
+          .in('ticket_id', ticketIds);
+
+        (items || []).forEach((item: any) => {
+          if (!itemsMap[item.ticket_id]) itemsMap[item.ticket_id] = [];
+          itemsMap[item.ticket_id].push(item);
+        });
+      }
+
+      // Merge items with tickets
+      const ticketsWithItems = (data || []).map((ticket: any) => ({
+        ...ticket,
+        items: itemsMap[ticket.id] || []
+      }));
+
+      setTickets(ticketsWithItems as ServiceTicket[]);
     } catch (error) {
       console.error('Error fetching tickets:', error);
     } finally {
@@ -590,25 +655,37 @@ export default function Services() {
 
     if (!user) return;
 
-    if (!formData.battery_model && !formData.invertor_model) {
+    // Use items if added, otherwise fall back to legacy fields
+    const hasItems = ticketItems.length > 0;
+    const hasBattery = hasItems ? ticketItems.some(i => i.item_type === 'BATTERY') : !!formData.battery_model;
+    const hasInvertor = hasItems ? ticketItems.some(i => i.item_type === 'INVERTER') : !!formData.invertor_model;
+
+    if (!hasBattery && !hasInvertor) {
       toast({
         title: 'Validation Error',
-        description: 'Please provide at least a Battery Model or an Invertor Model.',
+        description: 'Please add at least one Battery or Inverter item.',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    // Validate items have models
+    if (hasItems && ticketItems.some(i => !i.model)) {
+      toast({
+        title: 'Validation Error',
+        description: 'All items must have a model selected.',
         variant: 'destructive'
       });
       return;
     }
 
     try {
-      const hasBattery = !!formData.battery_model;
-      const hasInvertor = !!formData.invertor_model;
-
-      // Auto-assign to SP Battery if battery model is provided
+      // Auto-assign to SP Battery if battery items exist
       let batteryAgentId = hasBattery && spBatteryAgents.length > 0 ? spBatteryAgents[0] : null;
-      // Auto-assign to SP Invertor if invertor model is provided
+      // Auto-assign to SP Invertor if inverter items exist
       let invertorAgentId = hasInvertor && spInvertorAgents.length > 0 ? spInvertorAgents[0] : null;
 
-      // Fallback: If no SP agent is found and current user is an admin, auto-assign to self
+      // Fallback: If no SP agent is found and current user is an admin
       if (hasBattery && !batteryAgentId && isAdmin) {
         batteryAgentId = user.id;
       }
@@ -618,16 +695,20 @@ export default function Services() {
 
       const status = (batteryAgentId || invertorAgentId) ? 'IN_PROGRESS' : 'OPEN';
 
-      const { data, error } = await supabase.from('service_tickets').insert({
+      // Get first battery/inverter for backward compatibility
+      const firstBattery = hasItems ? ticketItems.find(i => i.item_type === 'BATTERY') : null;
+      const firstInverter = hasItems ? ticketItems.find(i => i.item_type === 'INVERTER') : null;
+
+      const { data: ticket, error } = await supabase.from('service_tickets').insert({
         customer_name: formData.customer_name,
         customer_phone: formData.customer_phone,
-        battery_model: formData.battery_model || '-',
-        invertor_model: formData.invertor_model || null,
-        issue_description: formData.issue_description,
+        battery_model: firstBattery?.model || formData.battery_model || '-',
+        invertor_model: firstInverter?.model || formData.invertor_model || null,
+        issue_description: firstBattery?.issue_description || firstInverter?.issue_description || formData.issue_description,
         created_by: user.id,
         assigned_to_battery: batteryAgentId,
         assigned_to_invertor: invertorAgentId,
-        assigned_to: batteryAgentId || invertorAgentId, // Keep for backward compatibility
+        assigned_to: batteryAgentId || invertorAgentId,
         status: status,
         battery_resolved: hasBattery ? false : null,
         invertor_resolved: hasInvertor ? false : null,
@@ -635,15 +716,45 @@ export default function Services() {
 
       if (error) throw error;
 
+      // Insert items into service_ticket_items
+      if (hasItems && ticket) {
+        // Expand items by quantity
+        const itemsToInsert: any[] = [];
+        ticketItems.forEach(item => {
+          const qty = Math.max(1, Number(item.quantity) || 1);
+          for (let i = 0; i < qty; i++) {
+            itemsToInsert.push({
+              ticket_id: ticket.id,
+              item_type: item.item_type,
+              model: item.model,
+              issue_description: item.issue_description || null,
+              product_id: null,
+            });
+          }
+        });
+
+        if (itemsToInsert.length > 0) {
+          const { error: itemsError } = await supabase
+            .from('service_ticket_items')
+            .insert(itemsToInsert);
+
+          if (itemsError) {
+            console.error('Error inserting items:', itemsError);
+            toast({ title: 'Warning', description: 'Ticket created but items could not be saved', variant: 'destructive' });
+          }
+        }
+      }
+
       if ((hasBattery && !batteryAgentId) || (hasInvertor && !invertorAgentId)) {
         toast({
           title: 'Ticket created (Partial assignment)',
-          description: 'One or more parts could not be auto-assigned. Please check assignment manually.',
+          description: 'One or more parts could not be auto-assigned.',
           variant: 'default'
         });
       } else {
         toast({ title: 'Ticket created & auto-assigned' });
       }
+
       setIsCreateOpen(false);
       setFormData({
         customer_name: '',
@@ -652,10 +763,9 @@ export default function Services() {
         invertor_model: '',
         issue_description: '',
       });
+      setTicketItems([]);
 
-      // Show print dialog for new ticket
-      setShowNewTicketPrint(data as ServiceTicket);
-
+      setShowNewTicketPrint(ticket as ServiceTicket);
       fetchTickets();
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
@@ -736,57 +846,94 @@ export default function Services() {
     }
   };
 
-  // Handle Battery Resolution
+  // Handle Battery Resolution - individual per item
   const handleBatteryResolveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ticketToResolveBattery || !user || !batteryRechargeable) return;
+    if (!ticketToResolveBattery || !user) return;
 
-    const priceNumber = Number(batteryPrice);
-    if (Number.isNaN(priceNumber) || priceNumber < 0) {
-      toast({ title: 'Enter a valid price', variant: 'destructive' });
+    const batteryItems = ticketToResolveBattery.items?.filter((i: any) => i.item_type === 'BATTERY') || [];
+    if (batteryItems.length === 0) {
+      toast({ title: 'No batteries to resolve', variant: 'destructive' });
+      return;
+    }
+
+    // Validate: each item must have warranty and price (if not warranty)
+    const hasAllWarranty = batteryItems.every((item: any) => batteryItemWarranty[item.id]);
+    if (!hasAllWarranty) {
+      toast({ title: 'Please select warranty status for all batteries', variant: 'destructive' });
+      return;
+    }
+
+    const hasValidPrices = batteryItems.every((item: any) => {
+      const isWarranty = batteryItemWarranty[item.id] === 'yes';
+      if (isWarranty) return true; // No price needed for warranty
+      const price = batteryItemPrices[item.id];
+      return price && !isNaN(Number(price)) && Number(price) >= 0;
+    });
+    if (!hasValidPrices) {
+      toast({ title: 'Please enter valid price for all non-warranty batteries', variant: 'destructive' });
       return;
     }
 
     try {
-      const hasInvertor = !!ticketToResolveBattery.invertor_model;
-      const invertorAlreadyResolved = ticketToResolveBattery.invertor_resolved === true;
+      // Update each battery item individually
+      for (const item of batteryItems) {
+        const isWarranty = batteryItemWarranty[item.id] === 'yes';
+        const price = isWarranty ? 0 : Number(batteryItemPrices[item.id] || 0);
 
-      // Determine if ticket should be marked as RESOLVED
-      const shouldResolve = !hasInvertor || invertorAlreadyResolved;
-
-      const updateData: Partial<ServiceTicket> = {
-        battery_rechargeable: batteryRechargeable === 'yes',
-        battery_resolved: true,
-        battery_price: priceNumber,
-        battery_resolved_by: user.id,
-        battery_resolved_at: new Date().toISOString(),
-      };
-
-      if (shouldResolve) {
-        updateData.status = 'RESOLVED';
-        // Calculate total price
-        updateData.service_price = priceNumber + (ticketToResolveBattery.invertor_price || 0);
-        updateData.resolution_notes = `Battery: ${batteryRechargeable === 'yes' ? 'Rechargeable' : 'Not rechargeable'}`;
+        await supabase
+          .from('service_ticket_items')
+          .update({
+            resolved: true,
+            price: price,
+            within_warranty: isWarranty,
+            resolved_by: user.id,
+            resolved_at: new Date().toISOString(),
+          })
+          .eq('id', item.id);
       }
 
-      const { error } = await supabase
+      // Calculate total battery price from items
+      const totalBatteryPrice = batteryItems.reduce((sum: number, item: any) => {
+        const isWarranty = batteryItemWarranty[item.id] === 'yes';
+        return sum + (isWarranty ? 0 : Number(batteryItemPrices[item.id] || 0));
+      }, 0);
+
+      // Check if all items (including inverters) are resolved
+      const allItems = await supabase
+        .from('service_ticket_items')
+        .select('*')
+        .eq('ticket_id', ticketToResolveBattery.id);
+      
+      const allResolved = allItems.data?.every((i: any) => i.resolved) ?? false;
+
+      const updateData: Record<string, unknown> = {
+        battery_resolved: true,
+        battery_price: totalBatteryPrice,
+        battery_resolved_by: user.id,
+        battery_resolved_at: new Date().toISOString(),
+        service_price: totalBatteryPrice + (ticketToResolveBattery.invertor_price || 0),
+      };
+
+      if (allResolved) {
+        updateData.status = 'RESOLVED';
+      }
+
+      await supabase
         .from('service_tickets')
         .update(updateData)
         .eq('id', ticketToResolveBattery.id);
 
-      if (error) throw error;
-
       await supabase.from('service_logs').insert({
         ticket_id: ticketToResolveBattery.id,
-        action: `Battery resolved - Rechargeable: ${batteryRechargeable}, Price: Rs. ${priceNumber}`,
+        action: `Battery resolved (${batteryItems.length} items) - Total: ₹${totalBatteryPrice}`,
         user_id: user.id,
       });
 
       toast({ title: 'Battery resolution saved' });
-
       setTicketToResolveBattery(null);
-      setBatteryRechargeable('');
-      setBatteryPrice('');
+      setBatteryItemPrices({});
+      setBatteryItemWarranty({});
       setSelectedTicket(null);
       fetchTickets();
     } catch (error: unknown) {
@@ -795,61 +942,98 @@ export default function Services() {
     }
   };
 
-  // Handle Invertor Resolution
-  const handleInvertorResolveSubmit = async (e: React.FormEvent) => {
+  // Handle Inverter Resolution - individual per item
+  const handleInverterResolveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ticketToResolveInvertor || !user || !invertorResolved) return;
+    if (!ticketToResolveInvertor || !user) return;
 
-    const priceNumber = Number(invertorPrice);
-    if (Number.isNaN(priceNumber) || priceNumber < 0) {
-      toast({ title: 'Enter a valid price', variant: 'destructive' });
+    const inverterItems = ticketToResolveInvertor.items?.filter((i: any) => i.item_type === 'INVERTER') || [];
+    if (inverterItems.length === 0) {
+      toast({ title: 'No inverters to resolve', variant: 'destructive' });
+      return;
+    }
+
+    // Validate: each item must have resolution status
+    const hasAllResolution = inverterItems.every((item: any) => inverterItemResolved[item.id]);
+    if (!hasAllResolution) {
+      toast({ title: 'Please select resolution status for all inverters', variant: 'destructive' });
+      return;
+    }
+
+    // Validate: if resolved = yes, must have price; if no, price can be 0
+    const hasValidPrices = inverterItems.every((item: any) => {
+      const isResolved = inverterItemResolved[item.id] === 'yes';
+      if (!isResolved) return true; // Not resolved = no price needed
+      const price = inverterItemPrices[item.id];
+      return price && !isNaN(Number(price)) && Number(price) >= 0;
+    });
+    if (!hasValidPrices) {
+      toast({ title: 'Please enter price for all resolved inverters', variant: 'destructive' });
       return;
     }
 
     try {
-      const batteryAlreadyResolved = ticketToResolveInvertor.battery_resolved === true;
+      // Update each inverter item individually
+      for (const item of inverterItems) {
+        const isResolved = inverterItemResolved[item.id] === 'yes';
+        const price = isResolved ? Number(inverterItemPrices[item.id] || 0) : 0;
 
-      // Determine if ticket should be marked as RESOLVED
-      const shouldResolve = batteryAlreadyResolved;
+        await supabase
+          .from('service_ticket_items')
+          .update({
+            resolved: isResolved,
+            price: price,
+            notes: invertorIssueDescription || null,
+            resolved_by: user.id,
+            resolved_at: new Date().toISOString(),
+          })
+          .eq('id', item.id);
+      }
 
-      const updateData: Partial<ServiceTicket> = {
+      // Calculate total inverter price from items
+      const totalInverterPrice = inverterItems.reduce((sum: number, item: any) => {
+        const isResolved = inverterItemResolved[item.id] === 'yes';
+        return sum + (isResolved ? Number(inverterItemPrices[item.id] || 0) : 0);
+      }, 0);
+
+      // Check if all items are resolved
+      const allItems = await supabase
+        .from('service_ticket_items')
+        .select('*')
+        .eq('ticket_id', ticketToResolveInvertor.id);
+      
+      const allResolved = allItems.data?.every((i: any) => i.resolved) ?? false;
+
+      const updateData: Record<string, unknown> = {
         invertor_resolved: true,
-        invertor_price: priceNumber,
+        invertor_price: totalInverterPrice,
         invertor_issue_description: invertorIssueDescription || null,
         invertor_resolved_by: user.id,
         invertor_resolved_at: new Date().toISOString(),
+        service_price: (ticketToResolveInvertor.battery_price || 0) + totalInverterPrice,
       };
 
-      if (shouldResolve) {
+      if (allResolved) {
         updateData.status = 'RESOLVED';
-        // Calculate total price
-        updateData.service_price = (ticketToResolveInvertor.battery_price || 0) + priceNumber;
-        const batteryNotes = ticketToResolveInvertor.battery_rechargeable !== null
-          ? `Battery: ${ticketToResolveInvertor.battery_rechargeable ? 'Rechargeable' : 'Not rechargeable'}`
-          : '';
-        updateData.resolution_notes = `${batteryNotes}${batteryNotes ? ' | ' : ''}Invertor: ${invertorResolved === 'yes' ? 'Resolved' : 'Not resolved'}${invertorIssueDescription ? ` - ${invertorIssueDescription}` : ''}`;
       }
 
-      const { error } = await supabase
+      await supabase
         .from('service_tickets')
         .update(updateData)
         .eq('id', ticketToResolveInvertor.id);
 
-      if (error) throw error;
-
       await supabase.from('service_logs').insert({
         ticket_id: ticketToResolveInvertor.id,
-        action: `Invertor resolved - Resolved: ${invertorResolved}, Price: Rs. ${priceNumber}`,
+        action: `Inverter resolved (${inverterItems.length} items) - Total: ₹${totalInverterPrice}`,
         notes: invertorIssueDescription || null,
         user_id: user.id,
       });
 
-      toast({ title: 'Invertor resolution saved' });
-
+      toast({ title: 'Inverter resolution saved' });
       setTicketToResolveInvertor(null);
-      setInvertorResolved('');
+      setInverterItemPrices({});
+      setInverterItemResolved({});
       setInvertorIssueDescription('');
-      setInvertorPrice('');
       setSelectedTicket(null);
       fetchTickets();
     } catch (error: unknown) {
@@ -1007,24 +1191,25 @@ export default function Services() {
                 <span className="font-semibold tracking-wide">New Ticket</span>
               </Button>
             </DialogTrigger>
-            <DialogContent className="glass-card bg-slate-50 dark:bg-[#0B0F19]/95 border-slate-200 dark:border-white/10 text-slate-900 dark:text-white">
-              <DialogHeader>
-                <DialogTitle className="text-xl font-bold">Create Service Ticket</DialogTitle>
+            <DialogContent className="glass-card bg-slate-50 dark:bg-[#0B0F19]/95 border-slate-200 dark:border-white/10 text-slate-900 dark:text-white sm:max-w-xl max-h-[85vh] overflow-y-auto">
+              <DialogHeader className="sticky top-0 bg-slate-50 dark:bg-[#0B0F19]/95 pb-2 z-10">
+                <DialogTitle className="text-lg sm:text-xl">Create Service Ticket</DialogTitle>
               </DialogHeader>
-              <form onSubmit={handleCreateTicket} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="customer_name" className="text-slate-600 dark:text-slate-500 dark:text-slate-400">Customer Name</Label>
+              <form onSubmit={handleCreateTicket} className="space-y-4 pb-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="customer_name" className="text-sm text-slate-600 dark:text-slate-400">Customer Name</Label>
                     <Input
                       id="customer_name"
                       value={formData.customer_name}
                       onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
                       required
-                      className="bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5 focus-visible:ring-[#4F8CFF]/50"
+                      placeholder="Customer name"
+                      className="h-10 bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="customer_phone" className="text-slate-600 dark:text-slate-500 dark:text-slate-400">Phone Number</Label>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="customer_phone" className="text-sm text-slate-600 dark:text-slate-400">Phone Number</Label>
                     <Input
                       id="customer_phone"
                       type="tel"
@@ -1033,55 +1218,148 @@ export default function Services() {
                         const value = e.target.value.replace(/\D/g, '');
                         setFormData({ ...formData, customer_phone: value });
                       }}
-                      placeholder="Numbers only"
+                      placeholder="Phone number"
                       required
-                      className="bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5 focus-visible:ring-[#4F8CFF]/50"
+                      className="h-10 bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5"
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="battery_model" className="text-slate-600 dark:text-slate-500 dark:text-slate-400">Battery Model (Optional)</Label>
-                    <Input
-                      id="battery_model"
-                      value={formData.battery_model}
-                      onChange={(e) => setFormData({ ...formData, battery_model: e.target.value })}
-                      placeholder="Leave empty for invertor-only"
-                      className="bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5 focus-visible:ring-[#4F8CFF]/50"
-                    />
+                {/* Multiple Items Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-sm text-slate-600 dark:text-slate-400">Service Items</Label>
+                    <div className="flex gap-1.5">
+                      <Button type="button" variant="outline" size="sm" onClick={() => addItem('BATTERY')} className="h-8 text-xs">
+                        <Battery className="h-3 w-3 mr-1" /> Battery
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => addItem('INVERTER')} className="h-8 text-xs">
+                        <Zap className="h-3 w-3 mr-1" /> Inverter
+                      </Button>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="invertor_model" className="text-slate-600 dark:text-slate-500 dark:text-slate-400">Invertor Model (Optional)</Label>
-                    <Input
-                      id="invertor_model"
-                      value={formData.invertor_model}
-                      onChange={(e) => setFormData({ ...formData, invertor_model: e.target.value })}
-                      placeholder="Leave empty for battery-only"
-                      className="bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5 focus-visible:ring-[#4F8CFF]/50"
-                    />
-                  </div>
+
+                  {ticketItems.length > 0 ? (
+                    <div className="space-y-3">
+                      {ticketItems.map((item, index) => {
+                        return (
+                          <div key={index} className="p-3 sm:p-4 border rounded-lg bg-slate-50 dark:bg-slate-900/50 space-y-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Badge 
+                                variant={item.item_type === 'BATTERY' ? 'default' : 'secondary'}
+                                className={item.item_type === 'BATTERY' ? 'bg-blue-500' : 'bg-amber-500'}
+                              >
+                                {item.item_type === 'BATTERY' ? (
+                                  <Battery className="h-3 w-3 mr-1" />
+                                ) : (
+                                  <Zap className="h-3 w-3 mr-1" />
+                                )}
+                                {item.item_type}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground ml-auto">
+                                Item {index + 1}
+                              </span>
+                              <Button type="button" variant="ghost" size="sm" onClick={() => removeItem(index)} className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20">
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                            
+                            <ModelSearchInput
+                              value={item.model}
+                              onChange={(value) => updateItem(index, 'model', value)}
+                              products={products}
+                              category={item.item_type === 'BATTERY' ? 'Battery' : 'Inverter'}
+                              placeholder={`Search ${item.item_type.toLowerCase()} model...`}
+                            />
+                            
+                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                              <div>
+                                <Label className="text-xs text-muted-foreground block mb-1">Qty</Label>
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  value={item.quantity}
+                                  onChange={(e) => updateItem(index, 'quantity', parseInt(e.target.value) || 1)}
+                                  className="text-center"
+                                />
+                              </div>
+                              <div className="col-span-2 sm:col-span-3">
+                                <Label className="text-xs text-muted-foreground block mb-1">Issue</Label>
+                                <Input
+                                  placeholder="Describe issue..."
+                                  value={item.issue_description}
+                                  onChange={(e) => updateItem(index, 'issue_description', e.target.value)}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="p-4 border-2 border-dashed rounded-lg text-center text-slate-500">
+                      <p className="text-sm">Click "Add Battery" or "Add Inverter" to add items</p>
+                    </div>
+                  )}
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="issue_description" className="text-slate-600 dark:text-slate-500 dark:text-slate-400">Issue Description</Label>
-                  <Textarea
-                    id="issue_description"
-                    value={formData.issue_description}
-                    onChange={(e) => setFormData({ ...formData, issue_description: e.target.value })}
-                    required
-                    rows={4}
-                    className="bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5 focus-visible:ring-[#4F8CFF]/50"
-                  />
-                </div>
-                <p className="text-sm text-slate-600 dark:text-slate-500 italic">
-                  {formData.battery_model && formData.invertor_model
-                    ? 'Ticket will be assigned to both Battery and Invertor specialists.'
-                    : formData.battery_model
-                      ? 'Ticket will be assigned to Battery specialist only.'
-                      : formData.invertor_model
-                        ? 'Ticket will be assigned to Invertor specialist only.'
-                        : 'Please provide at least one model.'}
+
+                {/* Legacy Fields (fallback) */}
+                {ticketItems.length === 0 && (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="battery_model" className="text-sm text-slate-600 dark:text-slate-500 flex items-center gap-1.5">
+                          <Battery className="h-3.5 w-3.5" /> Battery Model
+                        </Label>
+                        <Input
+                          id="battery_model"
+                          value={formData.battery_model}
+                          onChange={(e) => setFormData({ ...formData, battery_model: e.target.value })}
+                          placeholder="Type model or leave empty"
+                          className="h-10"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="invertor_model" className="text-sm text-slate-600 dark:text-slate-500 flex items-center gap-1.5">
+                          <Zap className="h-3.5 w-3.5" /> Inverter Model
+                        </Label>
+                        <Input
+                          id="invertor_model"
+                          value={formData.invertor_model}
+                          onChange={(e) => setFormData({ ...formData, invertor_model: e.target.value })}
+                          placeholder="Type model or leave empty"
+                          className="h-10"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="issue_description" className="text-sm text-slate-600 dark:text-slate-500">Issue Description</Label>
+                      <Textarea
+                        id="issue_description"
+                        value={formData.issue_description}
+                        onChange={(e) => setFormData({ ...formData, issue_description: e.target.value })}
+                        required
+                        rows={3}
+                        placeholder="Describe the issue..."
+                        className="resize-none"
+                      />
+                    </div>
+                  </>
+                )}
+
+                <p className="text-xs text-slate-600 dark:text-slate-500 italic">
+                  {ticketItems.length > 0
+                    ? `${ticketItems.length} item(s) added. Ticket will be auto-assigned.`
+                    : formData.battery_model && formData.invertor_model
+                      ? 'Will be assigned to Battery & Inverter specialists.'
+                      : formData.battery_model
+                        ? 'Will be assigned to Battery specialist only.'
+                        : formData.invertor_model
+                          ? 'Will be assigned to Inverter specialist only.'
+                          : 'Add items or provide at least one model.'}
                 </p>
-                <Button type="submit" className="w-full bg-[#4F8CFF] hover:bg-blue-600 text-slate-900 dark:text-white font-bold">Create Ticket</Button>
+                <Button type="submit" className="w-full bg-[#4F8CFF] hover:bg-blue-600 text-slate-900 dark:text-white font-bold h-11">
+                  Create Ticket
+                </Button>
               </form>
             </DialogContent>
           </Dialog>
@@ -1175,9 +1453,40 @@ export default function Services() {
                       </div>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-slate-600 dark:text-slate-500 dark:text-slate-400">
                         <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-slate-600 dark:text-slate-500" /> {ticket.customer_phone}</span>
-                        <span className="flex items-center gap-1.5 truncate max-w-[200px]"><Battery className="h-3.5 w-3.5 text-slate-600 dark:text-slate-500" /> {ticket.battery_model || 'N/A'}</span>
-                        {ticket.invertor_model && (
-                          <span className="flex items-center gap-1.5 truncate max-w-[200px]"><Zap className="h-3.5 w-3.5 text-slate-600 dark:text-slate-500" /> {ticket.invertor_model}</span>
+                        
+                        {/* Show items if available, otherwise legacy fields */}
+                        {ticket.items && ticket.items.length > 0 ? (
+                          ticket.items.slice(0, 3).map((item: any, idx: number) => (
+                            <span key={idx} className="flex items-center gap-1.5 truncate max-w-[200px]">
+                              {item.item_type === 'BATTERY' ? <Battery className="h-3.5 w-3.5" /> : <Zap className="h-3.5 w-3.5" />}
+                              {item.model}
+                              {item.within_warranty && <Badge className="text-[9px] px-1 py-0 bg-emerald-500/10 text-emerald-500">W</Badge>}
+                              {item.price > 0 && <span className="text-emerald-500 font-semibold">₹{item.price.toLocaleString('en-IN')}</span>}
+                              {item.resolved && <span className="text-emerald-500">✓</span>}
+                            </span>
+                          ))
+                        ) : (
+                          <>
+                            <span className="flex items-center gap-1.5 truncate max-w-[200px]">
+                              <Battery className="h-3.5 w-3.5 text-slate-600 dark:text-slate-500" /> 
+                              {ticket.battery_model || 'N/A'}
+                              {ticket.battery_price > 0 && (
+                                <span className="text-emerald-500 font-semibold">₹{ticket.battery_price.toLocaleString('en-IN')}</span>
+                              )}
+                            </span>
+                            {ticket.invertor_model && (
+                              <span className="flex items-center gap-1.5 truncate max-w-[200px]">
+                                <Zap className="h-3.5 w-3.5 text-slate-600 dark:text-slate-500" /> 
+                                {ticket.invertor_model}
+                                {ticket.invertor_price > 0 && (
+                                  <span className="text-emerald-500 font-semibold">₹{ticket.invertor_price.toLocaleString('en-IN')}</span>
+                                )}
+                              </span>
+                            )}
+                          </>
+                        )}
+                        {ticket.items && ticket.items.length > 3 && (
+                          <span className="text-xs text-slate-500">+{ticket.items.length - 3} more</span>
                         )}
                       </div>
                       <p className="text-sm text-slate-600 dark:text-slate-500 line-clamp-1 italic group-hover:text-slate-600 dark:text-slate-500 dark:text-slate-400 transition-colors">"{ticket.issue_description}"</p>
@@ -1185,6 +1494,15 @@ export default function Services() {
                   </div>
 
                   <div className="flex items-center gap-6 sm:justify-end mt-2 sm:mt-0">
+                    {/* Item count badge */}
+                    {ticket.items && ticket.items.length > 0 && (
+                      <Badge variant="outline" className="text-xs">
+                        {ticket.items.length} item{ticket.items.length > 1 ? 's' : ''}
+                        {' · '}
+                        {ticket.items.filter((i: any) => i.resolved).length}/{ticket.items.length} done
+                      </Badge>
+                    )}
+
                     {/* Assigned tech avatars */}
                     <div className="flex -space-x-2">
                       {ticket.assigned_to_battery && (
@@ -1205,11 +1523,17 @@ export default function Services() {
                       <span className="text-[11px] font-semibold tracking-wider text-slate-600 dark:text-slate-500 uppercase">
                         {formatDistanceToNow(new Date(ticket.created_at), { addSuffix: true })}
                       </span>
-                      {ticket.status === 'RESOLVED' && (
-                        <span className="font-bold text-emerald-400 tracking-wide drop-shadow-[0_0_8px_rgba(34,197,94,0.3)]">
-                          Rs. {(ticket.battery_price || 0) + (ticket.invertor_price || 0)}
-                        </span>
-                      )}
+                      {/* Show total from items or legacy fields */}
+                      {(() => {
+                        const itemsTotal = ticket.items?.reduce((sum: number, i: any) => sum + (i.price || 0), 0) || 0;
+                        const legacyTotal = (ticket.battery_price || 0) + (ticket.invertor_price || 0);
+                        const total = itemsTotal > 0 ? itemsTotal : legacyTotal;
+                        return total > 0 ? (
+                          <span className="font-bold text-emerald-400 tracking-wide drop-shadow-[0_0_8px_rgba(34,197,94,0.3)]">
+                            ₹{total.toLocaleString('en-IN')}
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
 
                     <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 ml-2">
@@ -1366,52 +1690,78 @@ export default function Services() {
                       </Select>
                     )}
 
-                    {/* Resolve Battery */}
-                    {canResolveBattery(selectedTicket) &&
-                      selectedTicket.status === 'IN_PROGRESS' &&
-                      !selectedTicket.battery_resolved && (
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            const ticket = selectedTicket;
-                            setSelectedTicket(null);
-                            // Small delay to allow first dialog to close and focus to reset
-                            setTimeout(() => {
-                              setTicketToResolveBattery(ticket);
-                              setBatteryRechargeable('');
-                              setBatteryPrice('');
-                            }, 100);
-                          }}
-                        >
-                          Resolve Battery
-                        </Button>
-                      )}
+                    {/* Resolve Items */}
+                    {selectedTicket.status === 'IN_PROGRESS' && (
+                      <div className="space-y-3">
+                        <Label className="text-sm font-semibold">Resolve Items:</Label>
+                        
+                        {/* Show all items as a summary */}
+                        {selectedTicket.items?.length > 0 && (
+                          <div className="flex flex-wrap gap-2 p-3 bg-muted/30 rounded-lg">
+                            {selectedTicket.items.map((item: any, idx: number) => (
+                              <Badge 
+                                key={idx} 
+                                variant={item.item_type === 'BATTERY' ? 'default' : 'secondary'}
+                                className={item.resolved ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : ''}
+                              >
+                                {item.item_type === 'BATTERY' ? <Battery className="h-3 w-3 mr-1" /> : <Zap className="h-3 w-3 mr-1" />}
+                                {item.model} {item.resolved && '✓'}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
 
-                    {/* Resolve Invertor */}
-                    {canResolveInvertor(selectedTicket) &&
-                      selectedTicket.status === 'IN_PROGRESS' &&
-                      !selectedTicket.invertor_resolved && (
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            const ticket = selectedTicket;
-                            setSelectedTicket(null);
-                            // Small delay to allow first dialog to close and focus to reset
-                            setTimeout(() => {
-                              setTicketToResolveInvertor(ticket);
-                              setInvertorResolved('');
-                              setInvertorIssueDescription('');
-                              setInvertorPrice('');
-                            }, 100);
-                          }}
-                        >
-                          Resolve Invertor
-                        </Button>
-                      )}
+                        {/* Battery Resolve Button */}
+                        {canResolveBattery(selectedTicket) && !selectedTicket.battery_resolved && (
+                          <Button 
+                            className="w-full gap-2"
+                            onClick={() => {
+                              const ticket = selectedTicket;
+                              setSelectedTicket(null);
+                              setTimeout(() => {
+                                setTicketToResolveBattery(ticket);
+                                setBatteryRechargeable('');
+                                setBatteryPrice('');
+                              }, 100);
+                            }}
+                          >
+                            <Battery className="h-4 w-4" />
+                            Resolve All Batteries
+                          </Button>
+                        )}
 
-                    {/* Close Ticket */}
-                    {canCloseTicket && selectedTicket.status === 'RESOLVED' && (
+                        {/* Inverter Resolve Button */}
+                        {canResolveInvertor(selectedTicket) && !selectedTicket.invertor_resolved && (
+                          <Button 
+                            className="w-full gap-2"
+                            variant="secondary"
+                            onClick={() => {
+                              const ticket = selectedTicket;
+                              setSelectedTicket(null);
+                              setTimeout(() => {
+                                setTicketToResolveInvertor(ticket);
+                                setInvertorResolved('');
+                                setInvertorIssueDescription('');
+                                setInvertorPrice('');
+                              }, 100);
+                            }}
+                          >
+                            <Zap className="h-4 w-4" />
+                            Resolve All Inverters
+                          </Button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Close Ticket - only when all items resolved */}
+                    {canCloseTicket && (() => {
+                      const allResolved = selectedTicket.items?.length > 0
+                        ? selectedTicket.items.every((i: any) => i.resolved)
+                        : selectedTicket.battery_resolved !== false && selectedTicket.invertor_resolved !== false;
+                      return selectedTicket.status !== 'CLOSED' && allResolved;
+                    })() && (
                       <Button
+                        className="w-full gap-2 bg-emerald-500 hover:bg-emerald-600"
                         onClick={() => {
                           setSelectedTicket(null);
                           setTicketToClose(selectedTicket);
@@ -1429,52 +1779,103 @@ export default function Services() {
         </Dialog>
 
         {/* Battery Resolution Dialog */}
-        <Dialog open={!!ticketToResolveBattery} onOpenChange={() => setTicketToResolveBattery(null)}>
-          <DialogContent>
+        <Dialog open={!!ticketToResolveBattery} onOpenChange={() => { setTicketToResolveBattery(null); }}>
+          <DialogContent className="max-h-[80vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Battery Resolution</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">
+                <Battery className="h-5 w-5 text-blue-500" />
+                Battery Resolution (Ticket-wise)
+              </DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleBatteryResolveSubmit} className="space-y-4">
-              <div className="space-y-3">
-                <Label>Battery Rechargeable?</Label>
-                <RadioGroup
-                  value={batteryRechargeable}
-                  onValueChange={(val) => setBatteryRechargeable(val as 'yes' | 'no')}
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="yes" id="rechargeable-yes" />
-                    <Label htmlFor="rechargeable-yes">Yes</Label>
+              <form onSubmit={handleBatteryResolveSubmit} className="space-y-5">
+
+              {/* Show all battery items with individual warranty and price inputs */}
+              {ticketToResolveBattery?.items?.filter((i: any) => i.item_type === 'BATTERY').length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-semibold text-muted-foreground">Resolve each battery:</Label>
+                    <Badge variant="outline" className="text-xs">
+                      {ticketToResolveBattery.items.filter((i: any) => i.item_type === 'BATTERY').length} item(s)
+                    </Badge>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="no" id="rechargeable-no" />
-                    <Label htmlFor="rechargeable-no">No</Label>
+                  <div className="max-h-[300px] overflow-y-auto space-y-3">
+                    {ticketToResolveBattery.items.filter((i: any) => i.item_type === 'BATTERY').map((item: any, idx: number) => (
+                      <div key={item.id || idx} className="p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-100 dark:border-blue-900 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1 min-w-0">
+                            <span className="font-semibold text-sm">{item.model}</span>
+                            {item.issue_description && (
+                              <p className="text-xs text-muted-foreground truncate">{item.issue_description}</p>
+                            )}
+                          </div>
+                          {item.resolved && <Badge className="bg-emerald-500/10 text-emerald-500 text-xs">✓ Resolved</Badge>}
+                        </div>
+                        
+                        {/* Individual Warranty Selection */}
+                        <div className="space-y-1">
+                          <Label className="text-xs font-medium text-muted-foreground">Warranty Status</Label>
+                          <RadioGroup
+                            value={batteryItemWarranty[item.id] || ''}
+                            onValueChange={(val) => setBatteryItemWarranty({ ...batteryItemWarranty, [item.id]: val })}
+                            className="flex gap-4"
+                          >
+                            <div className="flex items-center space-x-1.5">
+                              <RadioGroupItem value="yes" id={`warranty-${item.id}-yes`} className="h-3.5 w-3.5" />
+                              <Label htmlFor={`warranty-${item.id}-yes`} className="text-xs cursor-pointer">Yes - Free</Label>
+                            </div>
+                            <div className="flex items-center space-x-1.5">
+                              <RadioGroupItem value="no" id={`warranty-${item.id}-no`} className="h-3.5 w-3.5" />
+                              <Label htmlFor={`warranty-${item.id}-no`} className="text-xs cursor-pointer">No - Charge</Label>
+                            </div>
+                          </RadioGroup>
+                        </div>
+                        
+                        {/* Individual Price Input */}
+                        <div className="space-y-1">
+                          <Label className="text-xs font-medium text-muted-foreground">Price (₹)</Label>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="Enter price"
+                              value={batteryItemPrices[item.id] || ''}
+                              onChange={(e) => setBatteryItemPrices({ ...batteryItemPrices, [item.id]: e.target.value })}
+                              disabled={batteryItemWarranty[item.id] === 'yes'}
+                              className="h-9 text-sm"
+                            />
+                            {batteryItemWarranty[item.id] === 'yes' && (
+                              <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-600">Free</Badge>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </RadioGroup>
+                </div>
+              )}
+
+              {/* Summary */}
+              <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Total Batteries:</span>
+                  <span className="font-medium">{ticketToResolveBattery?.items?.filter((i: any) => i.item_type === 'BATTERY').length || 0}</span>
+                </div>
+                <div className="flex justify-between text-sm mt-1">
+                  <span className="text-muted-foreground">Total Price:</span>
+                  <span className="font-semibold">
+                    ₹{Object.values(batteryItemPrices).reduce((sum, p) => sum + (Number(p) || 0), 0).toLocaleString('en-IN')}
+                  </span>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="battery_price">Price (Rs.)</Label>
-                <Input
-                  id="battery_price"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={batteryPrice}
-                  onChange={(e) => setBatteryPrice(e.target.value)}
-                  onWheel={(e) => e.currentTarget.blur()}
-                  placeholder={batteryRechargeable === 'no' ? 'Can be 0' : 'Enter price'}
-                  autoComplete="off"
-                  required
-                />
-                {batteryRechargeable === 'no' && (
-                  <p className="text-sm text-muted-foreground">Price can be 0 if battery is not rechargeable</p>
-                )}
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={() => setTicketToResolveBattery(null)}>
+
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2 border-t">
+                <Button type="button" variant="outline" onClick={() => { setTicketToResolveBattery(null); setBatteryItemPrices({}); setBatteryItemWarranty({}); }} className="w-full sm:w-auto h-10">
                   Cancel
                 </Button>
-                <Button type="submit" disabled={!batteryRechargeable}>
-                  Save Battery Resolution
+                <Button type="submit" className="w-full sm:w-auto h-10 gap-2 bg-blue-600 hover:bg-blue-700">
+                  <Battery className="h-4 w-4" />
+                  Resolve {ticketToResolveBattery?.items?.filter((i: any) => i.item_type === 'BATTERY').length || 0} Battery(s)
                 </Button>
               </div>
             </form>
@@ -1483,61 +1884,113 @@ export default function Services() {
 
         {/* Invertor Resolution Dialog */}
         <Dialog open={!!ticketToResolveInvertor} onOpenChange={() => setTicketToResolveInvertor(null)}>
-          <DialogContent>
+          <DialogContent className="max-h-[80vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Invertor Resolution</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">
+                <Zap className="h-5 w-5 text-amber-500" />
+                Inverter Resolution (Ticket-wise)
+              </DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleInvertorResolveSubmit} className="space-y-4">
-              <div className="space-y-3">
-                <Label>Resolved?</Label>
-                <RadioGroup
-                  value={invertorResolved}
-                  onValueChange={(val) => setInvertorResolved(val as 'yes' | 'no')}
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="yes" id="invertor-yes" />
-                    <Label htmlFor="invertor-yes">Yes</Label>
+            <form onSubmit={handleInverterResolveSubmit} className="space-y-5">
+              {/* Show all inverter items with individual resolution and price inputs */}
+              {ticketToResolveInvertor?.items?.filter((i: any) => i.item_type === 'INVERTER').length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-semibold text-muted-foreground">Resolve each inverter:</Label>
+                    <Badge variant="outline" className="text-xs">
+                      {ticketToResolveInvertor.items.filter((i: any) => i.item_type === 'INVERTER').length} item(s)
+                    </Badge>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="no" id="invertor-no" />
-                    <Label htmlFor="invertor-no">No</Label>
+                  <div className="max-h-[300px] overflow-y-auto space-y-3">
+                    {ticketToResolveInvertor.items.filter((i: any) => i.item_type === 'INVERTER').map((item: any, idx: number) => (
+                      <div key={item.id || idx} className="p-4 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-100 dark:border-amber-900 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1 min-w-0">
+                            <span className="font-semibold text-sm">{item.model}</span>
+                            {item.issue_description && (
+                              <p className="text-xs text-muted-foreground truncate">{item.issue_description}</p>
+                            )}
+                          </div>
+                          {item.resolved && <Badge className="bg-emerald-500/10 text-emerald-500 text-xs">✓ Resolved</Badge>}
+                        </div>
+                        
+                        {/* Individual Resolution Status */}
+                        <div className="space-y-1">
+                          <Label className="text-xs font-medium text-muted-foreground">Issue Status</Label>
+                          <RadioGroup
+                            value={inverterItemResolved[item.id] || ''}
+                            onValueChange={(val) => setInverterItemResolved({ ...inverterItemResolved, [item.id]: val })}
+                            className="flex gap-4"
+                          >
+                            <div className="flex items-center space-x-1.5">
+                              <RadioGroupItem value="yes" id={`inv-resolved-${item.id}-yes`} className="h-3.5 w-3.5" />
+                              <Label htmlFor={`inv-resolved-${item.id}-yes`} className="text-xs cursor-pointer">Fixed</Label>
+                            </div>
+                            <div className="flex items-center space-x-1.5">
+                              <RadioGroupItem value="no" id={`inv-resolved-${item.id}-no`} className="h-3.5 w-3.5" />
+                              <Label htmlFor={`inv-resolved-${item.id}-no`} className="text-xs cursor-pointer">Not Fixed</Label>
+                            </div>
+                          </RadioGroup>
+                        </div>
+                        
+                        {/* Individual Price Input */}
+                        <div className="space-y-1">
+                          <Label className="text-xs font-medium text-muted-foreground">Price (₹)</Label>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="Enter price"
+                              value={inverterItemPrices[item.id] || ''}
+                              onChange={(e) => setInverterItemPrices({ ...inverterItemPrices, [item.id]: e.target.value })}
+                              disabled={inverterItemResolved[item.id] === 'no'}
+                              className="h-9 text-sm"
+                            />
+                            {inverterItemResolved[item.id] === 'no' && (
+                              <Badge variant="outline" className="text-xs bg-slate-100">No Charge</Badge>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </RadioGroup>
+                </div>
+              )}
+
+              {/* Summary */}
+              <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Total Inverters:</span>
+                  <span className="font-medium">{ticketToResolveInvertor?.items?.filter((i: any) => i.item_type === 'INVERTER').length || 0}</span>
+                </div>
+                <div className="flex justify-between text-sm mt-1">
+                  <span className="text-muted-foreground">Total Price:</span>
+                  <span className="font-semibold">
+                    ₹{Object.values(inverterItemPrices).reduce((sum, p) => sum + (Number(p) || 0), 0).toLocaleString('en-IN')}
+                  </span>
+                </div>
               </div>
+
+              {/* Notes */}
               <div className="space-y-2">
-                <Label htmlFor="invertor_issue">Issue / Reason Description (Optional)</Label>
+                <Label className="text-sm font-medium">Notes (Optional)</Label>
                 <Textarea
-                  id="invertor_issue"
                   value={invertorIssueDescription}
                   onChange={(e) => setInvertorIssueDescription(e.target.value)}
-                  rows={3}
-                  placeholder="Describe the issue or reason..."
+                  rows={2}
+                  placeholder="Additional notes..."
+                  className="resize-none"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="invertor_price">Price (Rs.)</Label>
-                <Input
-                  id="invertor_price"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={invertorPrice}
-                  onChange={(e) => setInvertorPrice(e.target.value)}
-                  onWheel={(e) => e.currentTarget.blur()}
-                  placeholder={invertorResolved === 'no' ? 'Can be 0' : 'Enter price'}
-                  autoComplete="off"
-                  required
-                />
-                {invertorResolved === 'no' && (
-                  <p className="text-sm text-muted-foreground">Price can be 0 if issue could not be resolved</p>
-                )}
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={() => setTicketToResolveInvertor(null)}>
+
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2 border-t">
+                <Button type="button" variant="outline" onClick={() => { setTicketToResolveInvertor(null); setInverterItemPrices({}); setInverterItemResolved({}); }} className="w-full sm:w-auto h-10">
                   Cancel
                 </Button>
-                <Button type="submit" disabled={!invertorResolved}>
-                  Save Invertor Resolution
+                <Button type="submit" className="w-full sm:w-auto h-10 gap-2 bg-amber-600 hover:bg-amber-700">
+                  <Zap className="h-4 w-4" />
+                  Resolve {ticketToResolveInvertor?.items?.filter((i: any) => i.item_type === 'INVERTER').length || 0} Inverter(s)
                 </Button>
               </div>
             </form>
@@ -1546,30 +1999,30 @@ export default function Services() {
 
         {/* Close Ticket Dialog */}
         <Dialog open={!!ticketToClose} onOpenChange={() => setTicketToClose(null)}>
-          <DialogContent>
+          <DialogContent className="max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Close Ticket</DialogTitle>
             </DialogHeader>
             {ticketToClose && (
               <form onSubmit={handleCloseSubmit} className="space-y-4">
-                <div className="p-4 rounded-lg bg-muted/50">
-                  <p className="text-lg font-semibold">Total Amount: Rs. {getTotalPrice(ticketToClose).toFixed(2)}</p>
-                  {ticketToClose.battery_price !== null && (
-                    <p className="text-sm text-muted-foreground">Battery: Rs. {ticketToClose.battery_price.toFixed(2)}</p>
+                <div className="p-4 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
+                  <p className="text-lg font-semibold text-emerald-700 dark:text-emerald-400">Total Amount: ₹{getTotalPrice(ticketToClose).toFixed(2)}</p>
+                  {ticketToClose.battery_price !== null && ticketToClose.battery_price > 0 && (
+                    <p className="text-sm text-muted-foreground">Battery: ₹{ticketToClose.battery_price.toFixed(2)}</p>
                   )}
-                  {ticketToClose.invertor_price !== null && (
-                    <p className="text-sm text-muted-foreground">Invertor: Rs. {ticketToClose.invertor_price.toFixed(2)}</p>
+                  {ticketToClose.invertor_price !== null && ticketToClose.invertor_price > 0 && (
+                    <p className="text-sm text-muted-foreground">Inverter: ₹{ticketToClose.invertor_price.toFixed(2)}</p>
                   )}
                 </div>
                 <div className="space-y-2">
-                  <Label>Payment Method</Label>
+                  <Label className="text-sm font-medium">Payment Method</Label>
                   <Select
                     value={paymentMethod}
                     onValueChange={(value) =>
                       setPaymentMethod(value as 'CASH' | 'CARD' | 'UPI')
                     }
                   >
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger className="w-full h-11">
                       <SelectValue placeholder="Select payment method" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1579,18 +2032,20 @@ export default function Services() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex justify-end gap-2">
+                <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2">
+                  <Button type="button" variant="outline" onClick={() => setTicketToClose(null)} className="w-full sm:w-auto">
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={!paymentMethod} className="w-full sm:w-auto gap-2">
+                    Confirm & Close
+                  </Button>
+                </div>
+                <div className="flex justify-center pt-2">
                   <PrintTicket
                     ticket={ticketToClose}
                     profileName={getProfileName(ticketToClose.assigned_to_battery)}
                     invertorProfileName={getProfileName(ticketToClose.assigned_to_invertor)}
                   />
-                  <Button type="button" variant="outline" onClick={() => setTicketToClose(null)}>
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={!paymentMethod}>
-                    Confirm & Close
-                  </Button>
                 </div>
               </form>
             )}

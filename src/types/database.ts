@@ -56,6 +56,23 @@ export interface ServiceTicket {
   invertor_resolved_by: string | null;
   invertor_resolved_at: string | null;
   invertor_issue_description: string | null;
+  items?: ServiceTicketItem[];
+}
+
+export interface ServiceTicketItem {
+  id: string;
+  ticket_id: string;
+  product_id: string | null;
+  item_type: 'BATTERY' | 'INVERTER';
+  model: string;
+  issue_description: string | null;
+  within_warranty: boolean | null;
+  resolved: boolean | null;
+  price: number | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  notes: string | null;
+  created_at: string | null;
 }
 
 export interface ServiceLog {
@@ -160,6 +177,23 @@ export interface HomeServiceRequest {
   created_by: string;
   assigned_to: string | null;
   assigned_at: string | null;
+  created_at: string;
+  updated_at: string;
+  items?: HomeServiceItem[];
+}
+
+export interface HomeServiceItem {
+  id: string;
+  request_id: string;
+  item_type: 'BATTERY' | 'INVERTER';
+  model: string;
+  issue_description: string | null;
+  resolved: boolean | null;
+  price: number | null;
+  within_warranty: boolean | null;
+  notes: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
   created_at: string;
   updated_at: string;
 }

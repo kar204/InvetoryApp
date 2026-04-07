@@ -6,7 +6,6 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { usePollingRefresh } from '@/hooks/usePollingRefresh';
 import { HomeServiceRequest, Profile } from '@/types/database';
 
 interface HomeServiceListProps {
@@ -33,11 +32,11 @@ const statusFilterOptions: Array<'all' | HomeServiceRequest['status']> = ['all',
 
 export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, initialSearch }: HomeServiceListProps) {
   const { user } = useAuth();
-  const [requests, setRequests] = useState<HomeServiceRequest[]>([]);
+  const [requests, setRequests] = useState<any[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(initialSearch ?? '');
-	  const [statusFilter, setStatusFilter] = useState<'all' | HomeServiceRequest['status']>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | HomeServiceRequest['status']>('all');
   const deferredSearch = useDeferredValue(search.trim());
   const fetchRequestsRef = useRef<() => Promise<void>>(async () => {});
 
@@ -53,6 +52,7 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
         setLoading(true);
       }
 
+      // First fetch requests
       let query = supabase
         .from('home_service_requests')
         .select('*')
@@ -79,7 +79,28 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
       const { data, error } = await query;
       if (error) throw error;
 
-      setRequests((data as HomeServiceRequest[]) || []);
+      // Fetch resolutions for these requests
+      const requestIds = (data || []).map((r: any) => r.id);
+      let resolutionsMap: Record<string, any> = {};
+      
+      if (requestIds.length > 0) {
+        const { data: resolutions } = await supabase
+          .from('home_service_resolutions')
+          .select('*')
+          .in('request_id', requestIds);
+        
+        (resolutions || []).forEach((res: any) => {
+          resolutionsMap[res.request_id] = res;
+        });
+      }
+
+      // Merge resolutions with requests
+      const requestsWithResolutions = (data || []).map((req: any) => ({
+        ...req,
+        resolution: resolutionsMap[req.id] || null
+      }));
+
+      setRequests(requestsWithResolutions);
     } catch (error) {
       console.error('Error fetching requests:', error);
     } finally {
@@ -89,33 +110,41 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
 
   fetchRequestsRef.current = async () => fetchRequests(false);
 
+  // Initial load only
   useEffect(() => {
-    void fetchRequestsRef.current();
+    fetchRequests(true);
+  }, []);
+
+  // Refetch on filter changes (no loading state)
+  useEffect(() => {
+    fetchRequests(false);
   }, [deferredSearch, refreshTrigger, statusFilter, user?.id, viewMode]);
 
+  // Fetch profiles once
   useEffect(() => {
     const fetchProfiles = async () => {
       const { data } = await supabase.from('profiles').select('*');
       setProfiles((data as Profile[]) || []);
     };
-
-    void fetchProfiles();
+    fetchProfiles();
   }, []);
 
+  // Realtime updates (no loading state)
   useEffect(() => {
     const channel = supabase
-      .channel(`home-service-requests-realtime-${viewMode}`)
+      .channel(`home-service-requests-realtime-${viewMode}-${user?.id || 'anon'}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'home_service_requests' }, () => {
-        void fetchRequestsRef.current();
+        fetchRequests(false);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'home_service_resolutions' }, () => {
+        fetchRequests(false);
       })
       .subscribe();
 
     return () => {
       channel.unsubscribe();
     };
-  }, [viewMode]);
-
-  usePollingRefresh(() => fetchRequests(false), 30000);
+  }, [viewMode, user?.id]);
 
   const getProfileName = (userId: string) => {
     return profiles.find((p) => p.user_id === userId)?.name || 'Unassigned';
@@ -206,20 +235,40 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
                           <div className="flex items-center gap-2">
                             <Battery className="h-3.5 w-3.5" />
                             <span>Battery: {request.battery_model}</span>
+                            {request.resolution?.battery_price > 0 && (
+                              <span className="text-emerald-500 font-semibold">₹{request.resolution.battery_price.toLocaleString('en-IN')}</span>
+                            )}
+                            {request.resolution?.battery_within_warranty && (
+                              <Badge className="bg-emerald-500/10 text-emerald-500 text-[10px]">Warranty</Badge>
+                            )}
                           </div>
                         )}
                         {request.inverter_model && (
                           <div className="flex items-center gap-2">
                             <Zap className="h-3.5 w-3.5" />
                             <span>Inverter: {request.inverter_model}</span>
+                            {request.resolution?.inverter_price > 0 && (
+                              <span className="text-emerald-500 font-semibold">₹{request.resolution.inverter_price.toLocaleString('en-IN')}</span>
+                            )}
                           </div>
                         )}
                         {request.spare_supplied && (
                           <div className="flex items-center gap-2">
-                            <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[9px] font-bold">
-                              S
-                            </span>
+                            <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[9px] font-bold">S</span>
                             <span>Spare: {request.spare_supplied}</span>
+                          </div>
+                        )}
+                        {request.resolution?.total_amount > 0 && (
+                          <div className="flex items-center gap-2 pt-1 border-t mt-1">
+                            <span className="font-bold text-emerald-600">
+                              Total: ₹{request.resolution.total_amount.toLocaleString('en-IN')}
+                            </span>
+                            {request.resolution?.battery_price > 0 && (
+                              <span className="text-slate-500">(Battery: ₹{request.resolution.battery_price.toLocaleString('en-IN')})</span>
+                            )}
+                            {request.resolution?.inverter_price > 0 && (
+                              <span className="text-slate-500">(Inverter: ₹{request.resolution.inverter_price.toLocaleString('en-IN')})</span>
+                            )}
                           </div>
                         )}
                       </div>

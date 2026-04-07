@@ -155,10 +155,61 @@ export type Database = {
         }
         Relationships: []
       }
+      home_service_items: {
+        Row: {
+          id: string
+          request_id: string
+          item_type: 'BATTERY' | 'INVERTER'
+          model: string
+          issue_description: string | null
+          resolved: boolean | null
+          price: number | null
+          within_warranty: boolean | null
+          notes: string | null
+          resolved_by: string | null
+          resolved_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          request_id: string
+          item_type: 'BATTERY' | 'INVERTER'
+          model: string
+          issue_description?: string | null
+          resolved?: boolean | null
+          price?: number | null
+          within_warranty?: boolean | null
+          notes?: string | null
+          resolved_by?: string | null
+          resolved_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          request_id?: string
+          item_type?: 'BATTERY' | 'INVERTER'
+          model?: string
+          issue_description?: string | null
+          resolved?: boolean | null
+          price?: number | null
+          within_warranty?: boolean | null
+          notes?: string | null
+          resolved_by?: string | null
+          resolved_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       home_service_resolutions: {
         Row: {
           battery_resolution_notes: string | null
           battery_resolved: boolean | null
+          battery_within_warranty: boolean | null
+          battery_price: number | null
+          inverter_price: number | null
           closed_at: string
           closed_by: string
           created_at: string
@@ -175,6 +226,9 @@ export type Database = {
         Insert: {
           battery_resolution_notes?: string | null
           battery_resolved?: boolean | null
+          battery_within_warranty?: boolean | null
+          battery_price?: number | null
+          inverter_price?: number | null
           closed_at: string
           closed_by: string
           created_at?: string
@@ -191,6 +245,9 @@ export type Database = {
         Update: {
           battery_resolution_notes?: string | null
           battery_resolved?: boolean | null
+          battery_within_warranty?: boolean | null
+          battery_price?: number | null
+          inverter_price?: number | null
           closed_at?: string
           closed_by?: string
           created_at?: string
@@ -478,6 +535,54 @@ export type Database = {
           status?: Database["public"]["Enums"]["service_status"]
           ticket_number?: string | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      service_ticket_items: {
+        Row: {
+          id: string
+          ticket_id: string
+          product_id: string | null
+          item_type: "BATTERY" | "INVERTER"
+          model: string
+          issue_description: string | null
+          within_warranty: boolean | null
+          resolved: boolean | null
+          price: number | null
+          resolved_by: string | null
+          resolved_at: string | null
+          notes: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          ticket_id: string
+          product_id?: string | null
+          item_type: "BATTERY" | "INVERTER"
+          model: string
+          issue_description?: string | null
+          within_warranty?: boolean | null
+          resolved?: boolean | null
+          price?: number | null
+          resolved_by?: string | null
+          resolved_at?: string | null
+          notes?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          ticket_id?: string
+          product_id?: string | null
+          item_type?: "BATTERY" | "INVERTER"
+          model?: string
+          issue_description?: string | null
+          within_warranty?: boolean | null
+          resolved?: boolean | null
+          price?: number | null
+          resolved_by?: string | null
+          resolved_at?: string | null
+          notes?: string | null
+          created_at?: string | null
         }
         Relationships: []
       }
