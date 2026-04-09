@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import { formatDistanceToNow, format } from 'date-fns';
+import { format } from 'date-fns';
 import { Clock, CheckCircle2, AlertCircle } from 'lucide-react';
 import { formatSLADuration } from '@/utils/slaUtils';
 import { Input } from '@/components/ui/input';
@@ -26,20 +26,58 @@ interface SLAData {
   type: 'in_shop' | 'home_service';
 }
 
+interface ServiceTicketSlaRow {
+  id: string;
+  ticket_id: string;
+  time_opened: string;
+  time_assigned: string | null;
+  time_resolved: string | null;
+  time_closed: string | null;
+  duration_open_to_assigned: number | null;
+  duration_assigned_to_resolved: number | null;
+  duration_resolved_to_closed: number | null;
+  total_duration: number | null;
+}
+
+interface ServiceTicketSummaryRow {
+  id: string;
+  ticket_number: string | null;
+  customer_name: string;
+  status: string;
+}
+
+interface HomeServiceRequestSlaRow {
+  id: string;
+  request_id: string;
+  time_opened: string;
+  time_assigned: string | null;
+  time_resolved: string | null;
+  time_closed: string | null;
+  duration_open_to_assigned: number | null;
+  duration_assigned_to_resolved: number | null;
+  duration_resolved_to_closed: number | null;
+  total_duration: number | null;
+}
+
+interface HomeServiceRequestSummaryRow {
+  id: string;
+  request_number: string;
+  customer_name: string;
+  status: string;
+}
+
+type TicketTypeFilter = 'all' | 'in_shop' | 'home_service';
+
 export function SLATracking() {
   const [tickets, setTickets] = useState<SLAData[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<SLAData | null>(null);
-  const [ticketType, setTicketType] = useState<'all' | 'in_shop' | 'home_service'>('all');
+  const [ticketType, setTicketType] = useState<TicketTypeFilter>('all');
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchTickets();
-  }, [ticketType, dateFrom, dateTo]);
-
-  const fetchTickets = async () => {
+  const fetchTickets = useCallback(async () => {
     setLoading(true);
     try {
       let allTickets: SLAData[] = [];
@@ -76,38 +114,37 @@ export function SLATracking() {
         if (toIso) inShopQuery = inShopQuery.lte('time_opened', toIso);
 
         const { data: inShopData, error: inShopError } = await inShopQuery;
+        const inShopRows = (inShopData as ServiceTicketSlaRow[] | null) || [];
 
-        if (!inShopError && inShopData) {
-          // Now get ticket details for each SLA record
-          const ticketIds = inShopData.map((s: any) => s.ticket_id);
+        if (!inShopError && inShopRows.length > 0) {
+          const ticketIds = inShopRows.map((slaRow) => slaRow.ticket_id);
 
           if (ticketIds.length > 0) {
             const { data: ticketData } = await supabase
               .from('service_tickets')
               .select('id, ticket_number, customer_name, status')
               .in('id', ticketIds);
+            const ticketRows = (ticketData as ServiceTicketSummaryRow[] | null) || [];
 
-            if (ticketData) {
-              const formatted = inShopData.map((sla: any) => {
-                const ticket = ticketData.find(t => t.id === sla.ticket_id);
-                return {
-                  id: sla.id,
-                  ticket_number: ticket?.ticket_number,
-                  customer_name: ticket?.customer_name || 'Unknown',
-                  status: ticket?.status || 'UNKNOWN',
-                  time_opened: sla.time_opened,
-                  time_assigned: sla.time_assigned,
-                  time_resolved: sla.time_resolved,
-                  time_closed: sla.time_closed,
-                  duration_open_to_assigned: sla.duration_open_to_assigned,
-                  duration_assigned_to_resolved: sla.duration_assigned_to_resolved,
-                  duration_resolved_to_closed: sla.duration_resolved_to_closed,
-                  total_duration: sla.total_duration,
-                  type: 'in_shop' as const,
-                };
-              });
-              allTickets = [...allTickets, ...formatted];
-            }
+            const formatted = inShopRows.map((slaRow) => {
+              const ticket = ticketRows.find((ticketRow) => ticketRow.id === slaRow.ticket_id);
+              return {
+                id: slaRow.id,
+                ticket_number: ticket?.ticket_number ?? undefined,
+                customer_name: ticket?.customer_name || 'Unknown',
+                status: ticket?.status || 'UNKNOWN',
+                time_opened: slaRow.time_opened,
+                time_assigned: slaRow.time_assigned,
+                time_resolved: slaRow.time_resolved,
+                time_closed: slaRow.time_closed,
+                duration_open_to_assigned: slaRow.duration_open_to_assigned,
+                duration_assigned_to_resolved: slaRow.duration_assigned_to_resolved,
+                duration_resolved_to_closed: slaRow.duration_resolved_to_closed,
+                total_duration: slaRow.total_duration,
+                type: 'in_shop' as const,
+              };
+            });
+            allTickets = [...allTickets, ...formatted];
           }
         }
       }
@@ -134,52 +171,63 @@ export function SLATracking() {
         if (toIso) homeQuery = homeQuery.lte('time_opened', toIso);
 
         const { data: homeData, error: homeError } = await homeQuery;
+        const homeRows = (homeData as HomeServiceRequestSlaRow[] | null) || [];
 
-        if (!homeError && homeData) {
-          // Now get request details for each SLA record
-          const requestIds = homeData.map((s: any) => s.request_id);
+        if (!homeError && homeRows.length > 0) {
+          const requestIds = homeRows.map((slaRow) => slaRow.request_id);
 
           if (requestIds.length > 0) {
             const { data: requestData } = await supabase
               .from('home_service_requests')
               .select('id, request_number, customer_name, status')
               .in('id', requestIds);
+            const requestRows = (requestData as HomeServiceRequestSummaryRow[] | null) || [];
 
-            if (requestData) {
-              const formatted = homeData.map((sla: any) => {
-                const request = requestData.find(r => r.id === sla.request_id);
-                return {
-                  id: sla.id,
-                  request_number: request?.request_number,
-                  customer_name: request?.customer_name || 'Unknown',
-                  status: request?.status || 'UNKNOWN',
-                  time_opened: sla.time_opened,
-                  time_assigned: sla.time_assigned,
-                  time_resolved: sla.time_resolved,
-                  time_closed: sla.time_closed,
-                  duration_open_to_assigned: sla.duration_open_to_assigned,
-                  duration_assigned_to_resolved: sla.duration_assigned_to_resolved,
-                  duration_resolved_to_closed: sla.duration_resolved_to_closed,
-                  total_duration: sla.total_duration,
-                  type: 'home_service' as const,
-                };
-              });
-              allTickets = [...allTickets, ...formatted];
-            }
+            const formatted = homeRows.map((slaRow) => {
+              const request = requestRows.find((requestRow) => requestRow.id === slaRow.request_id);
+              return {
+                id: slaRow.id,
+                request_number: request?.request_number,
+                customer_name: request?.customer_name || 'Unknown',
+                status: request?.status || 'UNKNOWN',
+                time_opened: slaRow.time_opened,
+                time_assigned: slaRow.time_assigned,
+                time_resolved: slaRow.time_resolved,
+                time_closed: slaRow.time_closed,
+                duration_open_to_assigned: slaRow.duration_open_to_assigned,
+                duration_assigned_to_resolved: slaRow.duration_assigned_to_resolved,
+                duration_resolved_to_closed: slaRow.duration_resolved_to_closed,
+                total_duration: slaRow.total_duration,
+                type: 'home_service' as const,
+              };
+            });
+            allTickets = [...allTickets, ...formatted];
           }
         }
       }
 
       setTickets(allTickets);
-      if (allTickets.length > 0 && !selectedTicket) {
-        setSelectedTicket(allTickets[0]);
-      }
+      setSelectedTicket((currentSelection) => {
+        if (allTickets.length === 0) {
+          return null;
+        }
+
+        if (currentSelection && allTickets.some((ticket) => ticket.id === currentSelection.id)) {
+          return currentSelection;
+        }
+
+        return allTickets[0];
+      });
     } catch (error) {
       console.error('Error fetching SLA data:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [dateFrom, dateTo, ticketType]);
+
+  useEffect(() => {
+    fetchTickets();
+  }, [fetchTickets]);
 
   const formatTime = (date: string | null) => {
     if (!date) return 'Not yet';
@@ -223,7 +271,7 @@ export function SLATracking() {
       <div>
         <h2 className="text-2xl font-bold mb-4">SLA Tracking Dashboard</h2>
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <Select value={ticketType} onValueChange={(v) => setTicketType(v as any)}>
+          <Select value={ticketType} onValueChange={(value) => setTicketType(value as TicketTypeFilter)}>
             <SelectTrigger className="w-48">
               <SelectValue />
             </SelectTrigger>
@@ -353,7 +401,7 @@ export function SLATracking() {
                     </div>
                     {selectedTicket.time_assigned && selectedTicket.duration_open_to_assigned !== null && (
                       <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                        ⏱️ {formatDuration(selectedTicket.duration_open_to_assigned)} from open
+                        Time: {formatDuration(selectedTicket.duration_open_to_assigned)} from open
                       </div>
                     )}
                   </div>
@@ -375,7 +423,7 @@ export function SLATracking() {
                     </div>
                     {selectedTicket.time_resolved && selectedTicket.duration_assigned_to_resolved !== null && (
                       <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                        ⏱️ {formatDuration(selectedTicket.duration_assigned_to_resolved)} from assignment
+                        Time: {formatDuration(selectedTicket.duration_assigned_to_resolved)} from assignment
                       </div>
                     )}
                   </div>
@@ -397,7 +445,7 @@ export function SLATracking() {
                     </div>
                     {selectedTicket.time_closed && selectedTicket.duration_resolved_to_closed !== null && (
                       <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                        ⏱️ {formatDuration(selectedTicket.duration_resolved_to_closed)} from resolution
+                        Time: {formatDuration(selectedTicket.duration_resolved_to_closed)} from resolution
                       </div>
                     )}
                   </div>

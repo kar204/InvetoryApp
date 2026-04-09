@@ -2,7 +2,7 @@ import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from './AppSidebar';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bell, Search, LayoutDashboard, Wrench, Package, Repeat2, ClipboardList, Users, LogOut, Recycle, ShoppingCart, AlertTriangle, X, CheckCheck } from 'lucide-react';
+import { Bell, Search, LayoutDashboard, Wrench, Package, Repeat2, ClipboardList, Users, LogOut, Recycle, ShoppingCart, AlertTriangle, X, CheckCheck, Battery, UserRound } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -20,6 +20,25 @@ type InShopSearchResult = { id: string; ticket_number: string | null; customer_n
 type HomeSearchResult = { id: string; request_number: string; customer_name: string; customer_phone: string };
 type CustomerSearchResult = { id: string; name: string; phone: string; email: string | null };
 type StockSearchRow = { product_id: string; quantity: number | null };
+type QuickNavItem = {
+  label: string;
+  path: string;
+  icon: typeof LayoutDashboard;
+  roles: AppRole[];
+  iconClassName: string;
+};
+
+const quickNavItems: QuickNavItem[] = [
+  { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'warehouse_staff', 'procurement_staff'], iconClassName: 'text-[#4F8CFF]' },
+  { label: 'Service Tickets', path: '/services', icon: Wrench, roles: ['admin', 'counter_staff', 'service_agent', 'sp_battery', 'sp_invertor', 'service_technician'], iconClassName: 'text-emerald-400' },
+  { label: 'Inventory', path: '/inventory', icon: Package, roles: ['admin', 'warehouse_staff', 'procurement_staff'], iconClassName: 'text-amber-500' },
+  { label: 'Aged Batteries', path: '/aged', icon: Battery, roles: ['admin', 'warehouse_staff'], iconClassName: 'text-cyan-500' },
+  { label: 'Second Hand', path: '/second-hand', icon: Repeat2, roles: ['admin', 'warehouse_staff', 'procurement_staff'], iconClassName: 'text-orange-500' },
+  { label: 'Scrap Management', path: '/scrap', icon: Recycle, roles: ['admin', 'scrap_manager'], iconClassName: 'text-indigo-400' },
+  { label: 'Customers', path: '/customers', icon: UserRound, roles: ['admin'], iconClassName: 'text-slate-500 dark:text-slate-300' },
+  { label: 'Transactions', path: '/transactions', icon: ClipboardList, roles: ['admin', 'warehouse_staff', 'procurement_staff'], iconClassName: 'text-rose-400' },
+  { label: 'User Management', path: '/users', icon: Users, roles: ['admin'], iconClassName: 'text-purple-400' },
+];
 
 export function AppLayout({ children }: AppLayoutProps) {
   const location = useLocation();
@@ -63,6 +82,36 @@ export function AppLayout({ children }: AppLayoutProps) {
       setSearching(false);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!notifOpen) return;
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
+        setNotifOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setNotifOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [notifOpen]);
+
+  useEffect(() => {
+    setNotifOpen(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     const q = commandQuery.trim();
@@ -159,12 +208,12 @@ export function AppLayout({ children }: AppLayoutProps) {
           const amount = payload.new.total_amount?.toLocaleString() || 0;
           toast({
             title: "New Sale Recorded",
-            description: `A sale of ₹${amount} was just recorded.`,
+            description: `A sale of Rs. ${amount} was just recorded.`,
           });
           setNotifications(prev => [{
             id: `sale-${Date.now()}`,
             title: 'New Sale Recorded',
-            desc: `A sale of ₹${amount} was recorded.`,
+            desc: `A sale of Rs. ${amount} was recorded.`,
             time: new Date(),
             type: 'sale' as const,
           }, ...prev].slice(0, 20));
@@ -182,7 +231,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           // Check if quantity dropped to critical
           if (payload.new.quantity <= 5 && payload.old.quantity > 5) {
             toast({
-              title: "Low Stock Alert 🚨",
+              title: "Low Stock Alert",
               description: `A product has dropped to critical stock levels (${payload.new.quantity} left).`,
               variant: "destructive",
             });
@@ -243,7 +292,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           <header className="sticky top-0 z-50 flex h-20 items-center justify-between gap-4 px-6 md:px-10 border-b border-white/[0.04] bg-slate-50 dark:bg-[#0B0F19]/70 backdrop-blur-xl supports-[backdrop-filter]:bg-slate-50 dark:bg-[#0B0F19]/40">
             {/* Left */}
             <div className="flex items-center gap-4 flex-1">
-              <SidebarTrigger className="lg:hidden text-slate-600 dark:text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white" />
+              <SidebarTrigger className="lg:hidden text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white" />
               <div className="hidden md:flex flex-col">
                 <h1 className="text-[22px] font-bold tracking-tight text-slate-900 dark:text-white drop-shadow-sm">{title}</h1>
                 <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-500 uppercase tracking-widest">{subtext}</p>
@@ -254,9 +303,9 @@ export function AppLayout({ children }: AppLayoutProps) {
             <div className="flex-1 max-w-[320px] hidden lg:flex items-center justify-center">
               <button
                 onClick={() => setOpen(true)}
-                className="w-full relative flex items-center pl-10 pr-16 bg-white dark:bg-[#111827]/80 border border-slate-200 dark:border-white/5 text-sm text-slate-600 dark:text-slate-500 dark:text-slate-400 placeholder:text-slate-600 dark:text-slate-500 rounded-full h-10 hover:bg-white dark:bg-[#111827] hover:text-slate-900 dark:hover:text-white hover:border-[#4F8CFF]/40 outline-none focus-visible:ring-1 focus-visible:ring-[#4F8CFF]/40 shadow-inner transition-all duration-300 group"
+                className="w-full relative flex items-center pl-10 pr-16 rounded-full border border-slate-200 bg-white text-sm text-slate-600 shadow-inner transition-all duration-300 group hover:border-[#4F8CFF]/40 hover:bg-white hover:text-slate-900 focus-visible:ring-1 focus-visible:ring-[#4F8CFF]/40 dark:border-white/5 dark:bg-[#111827]/80 dark:text-slate-400 dark:hover:bg-[#111827] dark:hover:text-white"
               >
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-600 dark:text-slate-500 group-hover:text-[#4F8CFF]" />
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 transition-colors group-hover:text-[#4F8CFF] dark:text-slate-400" />
                 <span>Global search...</span>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
                   <kbd className="inline-flex items-center text-[10px] font-bold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-[#1B2438] px-1.5 py-0.5 rounded shadow-sm border border-slate-200 dark:border-white/10 uppercase font-mono tracking-tighter">Ctrl K</kbd>
@@ -269,7 +318,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setOpen(true)}
-                  className="lg:hidden relative p-2.5 text-slate-600 dark:text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-white/5 rounded-full transition-all group"
+                  className="lg:hidden relative rounded-full p-2.5 text-slate-600 transition-all group hover:bg-white/5 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
                 >
                   <Search className="h-5 w-5 hover:scale-110 duration-300" />
                 </button>
@@ -394,36 +443,14 @@ export function AppLayout({ children }: AppLayoutProps) {
             <CommandList>
               <CommandEmpty>{searching ? 'Searching...' : 'No results found.'}</CommandEmpty>
               <CommandGroup heading="Quick Navigation">
-                <CommandItem onSelect={() => { setOpen(false); navigate('/dashboard') }}>
-                  <LayoutDashboard className="mr-2 h-4 w-4 text-[#4F8CFF]" />
-                  <span>Dashboard</span>
-                </CommandItem>
-                <CommandItem onSelect={() => { setOpen(false); navigate('/services') }}>
-                  <Wrench className="mr-2 h-4 w-4 text-emerald-400" />
-                  <span>Service Tickets</span>
-                </CommandItem>
-                <CommandItem onSelect={() => { setOpen(false); navigate('/inventory') }}>
-                  <Package className="mr-2 h-4 w-4 text-amber-500" />
-                  <span>Inventory</span>
-                </CommandItem>
-                <CommandItem onSelect={() => { setOpen(false); navigate('/second-hand') }}>
-                  <Repeat2 className="mr-2 h-4 w-4 text-orange-500" />
-                  <span>Second Hand</span>
-                </CommandItem>
-                <CommandItem onSelect={() => { setOpen(false); navigate('/scrap') }}>
-                  <Recycle className="mr-2 h-4 w-4 text-indigo-400" />
-                  <span>Scrap Management</span>
-                </CommandItem>
-                <CommandItem onSelect={() => { setOpen(false); navigate('/transactions') }}>
-                  <ClipboardList className="mr-2 h-4 w-4 text-rose-400" />
-                  <span>Transactions</span>
-                </CommandItem>
-                {hasAnyRole && hasAnyRole(['admin']) && (
-                  <CommandItem onSelect={() => { setOpen(false); navigate('/users') }}>
-                    <Users className="mr-2 h-4 w-4 text-purple-400" />
-                    <span>User Management</span>
-                  </CommandItem>
-                )}
+                {quickNavItems
+                  .filter((item) => hasAnyRole(item.roles))
+                  .map((item) => (
+                    <CommandItem key={item.path} onSelect={() => { setOpen(false); navigate(item.path); }}>
+                      <item.icon className={`mr-2 h-4 w-4 ${item.iconClassName}`} />
+                      <span>{item.label}</span>
+                    </CommandItem>
+                  ))}
               </CommandGroup>
               <CommandGroup heading="Actions">
                 <CommandItem onSelect={handleSignOut}>

@@ -15,7 +15,7 @@ interface StatsCardProps {
 }
 
 const iconVariantStyles = {
-  default: 'bg-slate-800 text-slate-600 dark:text-slate-500 dark:text-slate-400 shadow-[0_0_15px_rgba(148,163,184,0.15)] ring-1 ring-slate-700',
+  default: 'bg-slate-100 text-slate-600 shadow-[0_0_15px_rgba(148,163,184,0.12)] ring-1 ring-slate-200 dark:bg-slate-700/60 dark:text-slate-300 dark:ring-slate-700',
   primary: 'bg-[#4F8CFF]/10 text-[#4F8CFF] shadow-[0_0_15px_rgba(79,140,255,0.25)] ring-1 ring-[#4F8CFF]/30',
   secondary: 'bg-indigo-500/10 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.25)] ring-1 ring-indigo-500/30',
   warning: 'bg-amber-500/10 text-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.25)] ring-1 ring-amber-500/30',
@@ -77,7 +77,7 @@ export function StatsCard({
                 "flex items-center gap-1 text-[12px] font-semibold px-2 py-0.5 rounded-full backdrop-blur-md mb-2",
                 isUp ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
                   isDown ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" :
-                    "bg-slate-500/10 text-slate-600 dark:text-slate-500 dark:text-slate-400 border border-slate-500/20"
+                    "bg-slate-500/10 text-slate-600 border border-slate-500/20 dark:text-slate-300"
               )}>
                 {isUp && <TrendingUp className="h-3 w-3" />}
                 {isDown && <TrendingDown className="h-3 w-3" />}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Minus, Search, Package, ArrowUpCircle, ArrowDownCircle, Download, Trash2, X, Upload, ShoppingCart, AlertTriangle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { supabase } from '@/integrations/supabase/client';
-import { Product, Profile, StockSource, TransactionType, WarehouseStock } from '@/types/database';
+import { Product, Profile, StockSource, StockTransaction, TransactionType, WarehouseSale, WarehouseSaleItem, WarehouseStock } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { usePollingRefresh } from '@/hooks/usePollingRefresh';
@@ -31,10 +31,43 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-export default function Inventory() {
-  type SaleRecipientRole = 'service_technician' | 'sp_invertor';
+const SALE_RECIPIENT_ROLES = ['service_technician', 'sp_invertor'] as const;
+type SaleRecipientRole = typeof SALE_RECIPIENT_ROLES[number];
+type StockLevelFilter = 'all' | 'low' | 'medium' | 'high';
 
-  const saleRecipientRoles: SaleRecipientRole[] = ['service_technician', 'sp_invertor'];
+interface InventoryUploadRow {
+  'Product ID'?: string | number;
+  'New Quantity'?: string | number;
+  'Product Name'?: string | number;
+  Model?: string | number;
+  Category?: string | number;
+  Capacity?: string | number;
+}
+
+type InventorySaleItem = WarehouseSaleItem & {
+  product?: Product | null;
+};
+
+type InventorySale = WarehouseSale & {
+  items?: InventorySaleItem[];
+};
+
+type InventoryStockTransaction = StockTransaction & {
+  product?: Product | null;
+};
+
+interface InventoryActivity {
+  id: string;
+  date: string;
+  type: 'SALE' | 'STOCK IN';
+  details: string;
+  items: InventorySaleItem[];
+  quantity: number;
+  handler: string;
+  info: string;
+}
+
+export default function Inventory() {
   const saleRecipientRoleLabels: Record<SaleRecipientRole, string> = {
     service_technician: 'Home Technician',
     sp_invertor: 'SP Invertor',
@@ -58,15 +91,15 @@ export default function Inventory() {
   const [loading, setLoading] = useState(true);
   const [recordingSale, setRecordingSale] = useState(false);
   const [search, setSearch] = useState('');
-  const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
+  const [stockFilter, setStockFilter] = useState<StockLevelFilter>('all');
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [isStockTransferOpen, setIsStockTransferOpen] = useState(false);
   const [isRecordSaleOpen, setIsRecordSaleOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const [activeTab, setActiveTab] = useState<'inventory' | 'sales'>('inventory');
-  const [sales, setSales] = useState<any[]>([]);
+  const [sales, setSales] = useState<InventorySale[]>([]);
   const [salesLoading, setSalesLoading] = useState(false);
-  const [stockTransactions, setStockTransactions] = useState<any[]>([]);
+  const [stockTransactions, setStockTransactions] = useState<InventoryStockTransaction[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [historyTab, setHistoryTab] = useState<'sales' | 'transfers'>('sales');
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -116,6 +149,102 @@ export default function Inventory() {
     if (action === 'sale') setIsRecordSaleOpen(true);
   }, [location.search]);
 
+  const fetchProfiles = useCallback(async () => {
+    try {
+      const [profilesRes, rolesRes] = await Promise.all([
+        supabase.from('profiles').select('*'),
+        supabase.from('user_roles').select('user_id, role').in('role', [...SALE_RECIPIENT_ROLES]),
+      ]);
+
+      if (profilesRes.error) throw profilesRes.error;
+      if (rolesRes.error) throw rolesRes.error;
+
+      const profileData = (profilesRes.data as Profile[]) || [];
+      const rolesByUser = new Map<string, SaleRecipientRole[]>();
+
+      ((rolesRes.data as Array<{ user_id: string; role: SaleRecipientRole }>) || []).forEach(({ user_id, role }) => {
+        const existingRoles = rolesByUser.get(user_id) || [];
+        if (!existingRoles.includes(role)) {
+          rolesByUser.set(user_id, [...existingRoles, role]);
+        }
+      });
+
+      setProfiles(profileData);
+      setSaleRecipients(
+        profileData
+          .filter((profile) => rolesByUser.has(profile.user_id))
+          .map((profile) => ({
+            user_id: profile.user_id,
+            name: profile.name,
+            roles: rolesByUser.get(profile.user_id) || [],
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      );
+    } catch (err) {
+      console.error('Error fetching profiles:', err);
+    }
+  }, []);
+
+  const fetchStockTransactions = useCallback(async () => {
+    setTransactionsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('stock_transactions')
+        .select('*, product:products(*)')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setStockTransactions((data as InventoryStockTransaction[] | null) || []);
+    } catch (error) {
+      console.error('Error fetching transactions:', error);
+    } finally {
+      setTransactionsLoading(false);
+    }
+  }, []);
+
+  const getProfileName = (userId: string) => {
+    const profile = profiles.find(p => p.id === userId || p.user_id === userId);
+    return profile?.name || 'N/A';
+  };
+
+  const fetchSales = useCallback(async () => {
+    setSalesLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('warehouse_sales')
+        .select('*, items:warehouse_sale_items(*, product:products(*))')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setSales((data as InventorySale[] | null) || []);
+    } catch (error) {
+      console.error('Error fetching sales:', error);
+    } finally {
+      setSalesLoading(false);
+    }
+  }, []);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [productsRes, stockRes] = await Promise.all([
+        supabase
+          .from('products')
+          .select('*')
+          .not('category', 'in', '("SH Battery", "SH Inverter")')
+          .order('name'),
+        supabase.from('warehouse_stock').select('*, product:products(*)'),
+      ]);
+
+      setProducts((productsRes.data as Product[]) || []);
+      const allStock = (stockRes.data as WarehouseStock[]) || [];
+      setStock(allStock.filter(item => !isSecondHandCategory(item.product?.category)));
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchData();
     fetchSales();
@@ -148,7 +277,7 @@ export default function Inventory() {
       salesChannel.unsubscribe();
       transactionsChannel.unsubscribe();
     };
-  }, []);
+  }, [fetchData, fetchProfiles, fetchSales, fetchStockTransactions]);
 
   // Fallback polling (helps when realtime is delayed or client missed an event)
   usePollingRefresh(() => {
@@ -156,102 +285,6 @@ export default function Inventory() {
     fetchSales();
     fetchStockTransactions();
   }, 30000);
-
-  const fetchProfiles = async () => {
-    try {
-      const [profilesRes, rolesRes] = await Promise.all([
-        supabase.from('profiles').select('*'),
-        supabase.from('user_roles').select('user_id, role').in('role', saleRecipientRoles),
-      ]);
-
-      if (profilesRes.error) throw profilesRes.error;
-      if (rolesRes.error) throw rolesRes.error;
-
-      const profileData = (profilesRes.data as Profile[]) || [];
-      const rolesByUser = new Map<string, SaleRecipientRole[]>();
-
-      ((rolesRes.data as Array<{ user_id: string; role: SaleRecipientRole }>) || []).forEach(({ user_id, role }) => {
-        const existingRoles = rolesByUser.get(user_id) || [];
-        if (!existingRoles.includes(role)) {
-          rolesByUser.set(user_id, [...existingRoles, role]);
-        }
-      });
-
-      setProfiles(profileData);
-      setSaleRecipients(
-        profileData
-          .filter((profile) => rolesByUser.has(profile.user_id))
-          .map((profile) => ({
-            user_id: profile.user_id,
-            name: profile.name,
-            roles: rolesByUser.get(profile.user_id) || [],
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-      );
-    } catch (err) {
-      console.error('Error fetching profiles:', err);
-    }
-  };
-
-  const fetchStockTransactions = async () => {
-    setTransactionsLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('stock_transactions')
-        .select('*, product:products(*)')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setStockTransactions(data || []);
-    } catch (error) {
-      console.error('Error fetching transactions:', error);
-    } finally {
-      setTransactionsLoading(false);
-    }
-  };
-
-  const getProfileName = (userId: string) => {
-    const profile = profiles.find(p => p.id === userId || p.user_id === userId);
-    return profile?.name || 'N/A';
-  };
-
-  const fetchSales = async () => {
-    setSalesLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('warehouse_sales')
-        .select('*, items:warehouse_sale_items(*, product:products(*))')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setSales(data || []);
-    } catch (error) {
-      console.error('Error fetching sales:', error);
-    } finally {
-      setSalesLoading(false);
-    }
-  };
-
-  const fetchData = async () => {
-    try {
-      const [productsRes, stockRes] = await Promise.all([
-        supabase
-          .from('products')
-          .select('*')
-          .not('category', 'in', '("SH Battery", "SH Inverter")')
-          .order('name'),
-        supabase.from('warehouse_stock').select('*, product:products(*)'),
-      ]);
-
-      setProducts((productsRes.data as Product[]) || []);
-      const allStock = (stockRes.data as WarehouseStock[]) || [];
-      setStock(allStock.filter(item => !isSecondHandCategory(item.product?.category)));
-    } catch (error) {
-      console.error('Error fetching data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -542,7 +575,7 @@ export default function Inventory() {
   });
 
   const filterByCategory = (category: string) =>
-    filteredStock.filter(item => (item.product as any)?.category === category);
+    filteredStock.filter((item) => item.product?.category === category);
 
   const renderStockTable = (items: WarehouseStock[]) => (
     <div className="w-full bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in duration-500">
@@ -666,14 +699,14 @@ export default function Inventory() {
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data);
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+      const rows = XLSX.utils.sheet_to_json<InventoryUploadRow>(ws);
 
       let updated = 0;
       let created = 0;
 
       for (const row of rows) {
         const productId = row['Product ID']?.toString().trim();
-        const newQty = parseInt(row['New Quantity']);
+        const newQty = Number(row['New Quantity']);
         const productName = row['Product Name']?.toString().trim();
         const model = row['Model']?.toString().trim();
         const category = row['Category']?.toString().trim();
@@ -1195,7 +1228,7 @@ export default function Inventory() {
                                  <p className="font-bold text-slate-800 dark:text-slate-200 truncate">{product.name}</p>
                                  <p className="text-[10px] text-slate-500 truncate">{product.model}</p>
                                </div>
-                               <Badge variant="outline" className="ml-2 shrink-0 text-[10px] bg-slate-500/5 text-slate-500 border-slate-500/20 truncate max-w-[80px]">{(product as any).category}</Badge>
+                               <Badge variant="outline" className="ml-2 shrink-0 max-w-[80px] truncate border-slate-500/20 bg-slate-500/5 text-[10px] text-slate-500">{product.category}</Badge>
                              </button>
                            ))}
                          </div>
@@ -1290,7 +1323,7 @@ export default function Inventory() {
             />
           </div>
           {activeTab === 'inventory' && (
-            <Select value={stockFilter} onValueChange={(v: any) => setStockFilter(v)}>
+            <Select value={stockFilter} onValueChange={(value) => setStockFilter(value as StockLevelFilter)}>
               <SelectTrigger className="w-full sm:w-[180px]">
                 <SelectValue placeholder="Stock Level" />
               </SelectTrigger>
@@ -1382,42 +1415,46 @@ export default function Inventory() {
                         const sLower = search.toLowerCase();
 
                         // Transform sales to activity records
-                        const salesActivity = sales.map(s => ({
-                          id: `sale-${s.id}`,
-                          date: s.created_at,
+                        const salesActivity: InventoryActivity[] = sales.map((sale) => ({
+                          id: `sale-${sale.id}`,
+                          date: sale.created_at,
                           type: 'SALE',
-                          details: s.customer_name || 'Walking Customer',
-                          items: s.items || [],
-                          quantity: s.items?.reduce((acc: number, cur: any) => acc + (cur.quantity || 0), 0) || 0,
-                          handler: s.sold_by,
-                          info: `${s.payment_method} - ₹${s.total_amount?.toLocaleString()}`,
+                          details: sale.customer_name || 'Walking Customer',
+                          items: sale.items || [],
+                          quantity: sale.items?.reduce((total, item) => total + (item.quantity || 0), 0) || 0,
+                          handler: sale.sold_by,
+                          info: `${sale.payment_method} - Rs. ${sale.total_amount?.toLocaleString('en-IN') || '0'}`,
                         }));
 
                         // Transform transactions to activity records (ONLY 'IN' transactions as per user request)
-                        const transActivity = stockTransactions
-                          .filter(t => t.transaction_type === 'IN')
-                          .map(t => ({
-                            id: `trans-${t.id}`,
-                            date: t.created_at,
+                        const transActivity: InventoryActivity[] = stockTransactions
+                          .filter((transaction) => transaction.transaction_type === 'IN')
+                          .map((transaction) => ({
+                            id: `trans-${transaction.id}`,
+                            date: transaction.created_at,
                             type: 'STOCK IN',
-                            details: `Stock Added: ${t.product?.name}`,
+                            details: `Stock Added: ${transaction.product?.name}`,
                             items: [],
-                            quantity: t.quantity,
-                            handler: t.handled_by,
-                            info: `${t.product?.model} - ${t.remarks || 'Stock Transfer'}`,
+                            quantity: transaction.quantity,
+                            handler: transaction.handled_by,
+                            info: `${transaction.product?.model} - ${transaction.remarks || 'Stock Transfer'}`,
                           }));
 
                         const unified = [...salesActivity, ...transActivity].sort((a, b) =>
                           new Date(b.date).getTime() - new Date(a.date).getTime()
-                        ).filter(a => {
+                        ).filter((activity) => {
                           const matchesSearch =
-                            a.details?.toLowerCase().includes(sLower) ||
-                            a.info?.toLowerCase().includes(sLower) ||
-                            a.items?.some((i: any) => {
-                              const pName = i.product?.name?.toLowerCase() || '';
-                              const pModel = i.model_number?.toLowerCase() || '';
-                              const combined = `${pName} ${pModel}`;
-                              return pName.includes(sLower) || pModel.includes(sLower) || combined.includes(sLower);
+                            activity.details?.toLowerCase().includes(sLower) ||
+                            activity.info?.toLowerCase().includes(sLower) ||
+                            activity.items.some((item) => {
+                              const productName = item.product?.name?.toLowerCase() || '';
+                              const productModel = item.model_number?.toLowerCase() || '';
+                              const combined = `${productName} ${productModel}`;
+                              return (
+                                productName.includes(sLower) ||
+                                productModel.includes(sLower) ||
+                                combined.includes(sLower)
+                              );
                             });
                           return matchesSearch;
                         });
@@ -1453,9 +1490,9 @@ export default function Inventory() {
                               <div className="font-medium">{act.details}</div>
                               {act.items.length > 0 && (
                                 <div className="text-[10px] text-muted-foreground mt-1">
-                                  {act.items.map((i: any, idx: number) => (
+                                  {act.items.map((item, idx) => (
                                     <span key={idx}>
-                                      {i.quantity}x {i.product?.model || i.model_number}
+                                      {item.quantity}x {item.product?.model || item.model_number}
                                       {idx < act.items.length - 1 ? ', ' : ''}
                                     </span>
                                   ))}

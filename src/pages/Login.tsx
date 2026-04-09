@@ -10,20 +10,20 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [signInForm, setSignInForm] = useState({ email: '', password: '' });
+  const [signUpForm, setSignUpForm] = useState({ name: '', email: '', password: '' });
+  const [showSignInPassword, setShowSignInPassword] = useState(false);
+  const [showSignUpPassword, setShowSignUpPassword] = useState(false);
+  const [loadingMode, setLoadingMode] = useState<'signin' | 'signup' | null>(null);
   const navigate = useNavigate();
   const { signIn, signUp } = useAuth();
   const { toast } = useToast();
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+    setLoadingMode('signin');
     
-    const { error } = await signIn(email, password);
+    const { error } = await signIn(signInForm.email, signInForm.password);
     
     if (error) {
       toast({
@@ -34,14 +34,14 @@ export default function Login() {
     } else {
       navigate('/dashboard');
     }
-    setLoading(false);
+    setLoadingMode(null);
   };
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+    setLoadingMode('signup');
     
-    const { error } = await signUp(email, password, name);
+    const { error } = await signUp(signUpForm.email, signUpForm.password, signUpForm.name);
     
     if (error) {
       toast({
@@ -56,7 +56,7 @@ export default function Login() {
       });
       navigate('/dashboard');
     }
-    setLoading(false);
+    setLoadingMode(null);
   };
 
   return (
@@ -90,8 +90,8 @@ export default function Login() {
                     id="email"
                     type="email"
                     placeholder="you@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    value={signInForm.email}
+                    onChange={(e) => setSignInForm((current) => ({ ...current, email: e.target.value }))}
                     required
                   />
                 </div>
@@ -100,10 +100,10 @@ export default function Login() {
                   <div className="relative">
                     <Input
                       id="password"
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      type={showSignInPassword ? 'text' : 'password'}
+                      placeholder="Enter password"
+                      value={signInForm.password}
+                      onChange={(e) => setSignInForm((current) => ({ ...current, password: e.target.value }))}
                       required
                     />
                     <Button
@@ -111,14 +111,14 @@ export default function Login() {
                       variant="ghost"
                       size="icon"
                       className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
-                      onClick={() => setShowPassword(!showPassword)}
+                      onClick={() => setShowSignInPassword((current) => !current)}
                     >
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      {showSignInPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </Button>
                   </div>
                 </div>
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? 'Signing in...' : 'Sign In'}
+                <Button type="submit" className="w-full" disabled={loadingMode !== null}>
+                  {loadingMode === 'signin' ? 'Signing in...' : 'Sign In'}
                 </Button>
               </form>
             </TabsContent>
@@ -131,8 +131,8 @@ export default function Login() {
                     id="signup-name"
                     type="text"
                     placeholder="John Doe"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    value={signUpForm.name}
+                    onChange={(e) => setSignUpForm((current) => ({ ...current, name: e.target.value }))}
                     required
                   />
                 </div>
@@ -142,8 +142,8 @@ export default function Login() {
                     id="signup-email"
                     type="email"
                     placeholder="you@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    value={signUpForm.email}
+                    onChange={(e) => setSignUpForm((current) => ({ ...current, email: e.target.value }))}
                     required
                   />
                 </div>
@@ -152,10 +152,10 @@ export default function Login() {
                   <div className="relative">
                     <Input
                       id="signup-password"
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      type={showSignUpPassword ? 'text' : 'password'}
+                      placeholder="Create a password"
+                      value={signUpForm.password}
+                      onChange={(e) => setSignUpForm((current) => ({ ...current, password: e.target.value }))}
                       required
                       minLength={6}
                     />
@@ -164,14 +164,14 @@ export default function Login() {
                       variant="ghost"
                       size="icon"
                       className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
-                      onClick={() => setShowPassword(!showPassword)}
+                      onClick={() => setShowSignUpPassword((current) => !current)}
                     >
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      {showSignUpPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </Button>
                   </div>
                 </div>
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? 'Creating account...' : 'Create Account'}
+                <Button type="submit" className="w-full" disabled={loadingMode !== null}>
+                  {loadingMode === 'signup' ? 'Creating account...' : 'Create Account'}
                 </Button>
               </form>
             </TabsContent>

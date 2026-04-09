@@ -57,12 +57,41 @@ interface AgedBatteryRental {
   customer?: Customer;
 }
 
+interface RpcResult<T = unknown> {
+  data: T | null;
+  error: unknown;
+}
+
 const STATUS_COLORS: Record<AgedBatteryStatus, { bg: string; text: string; label: string }> = {
   IN_STOCK: { bg: 'bg-slate-500/10', text: 'text-slate-500', label: 'In Stock' },
   RENTED: { bg: 'bg-purple-500/10', text: 'text-purple-500', label: 'Rented' },
   RETURNED: { bg: 'bg-amber-500/10', text: 'text-amber-500', label: 'Returned' },
   SOLD: { bg: 'bg-emerald-500/10', text: 'text-emerald-500', label: 'Sold' },
   SCRAPPED: { bg: 'bg-red-500/10', text: 'text-red-500', label: 'Scrapped' },
+};
+
+const inferScrapCategory = (product?: Product): string => {
+  const category = (product?.category || '').toLowerCase();
+  const combined = `${product?.name || ''} ${product?.model || ''}`.toLowerCase();
+
+  if (category === 'smf' || combined.includes('smf')) {
+    return 'SMF';
+  }
+
+  if (combined.includes('bike') || combined.includes('motorcycle')) {
+    return 'Bike Battery';
+  }
+
+  if (combined.includes('inverter')) {
+    return 'Inverter Battery';
+  }
+
+  return 'Car Battery';
+};
+
+const buildAgedScrapModelLabel = (battery: AgedBattery): string => {
+  const productLabel = [battery.product?.name, battery.product?.model].filter(Boolean).join(' - ');
+  return productLabel || battery.barcode;
 };
 
 function extractSerial(input: string): string {
@@ -245,12 +274,12 @@ export default function AgedBatteries() {
     }
   };
 
-  const retryRpc = async (
-    fn: () => Promise<{ data: unknown; error: any }>,
+  const retryRpc = async <T,>(
+    fn: () => Promise<RpcResult<T>>,
     retries = 3,
     delay = 1000
-  ): Promise<{ data: unknown; error: any }> => {
-    let lastError: any = null;
+  ): Promise<RpcResult<T>> => {
+    let lastError: unknown = null;
     
     for (let i = 0; i < retries; i++) {
       try {
@@ -389,7 +418,7 @@ export default function AgedBatteries() {
       
       controlsRef.current = controls;
       
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Stop any stream on error
       const videoElement = document.getElementById('aged-battery-camera-reader') as HTMLVideoElement;
       if (videoElement?.srcObject) {
@@ -398,9 +427,9 @@ export default function AgedBatteries() {
       }
       
       let errorMessage = 'Could not access camera.';
-      if (err.name === 'NotAllowedError') errorMessage = 'Camera permission denied.';
-      else if (err.name === 'NotFoundError') errorMessage = 'No camera found.';
-      else errorMessage = err.message || 'Camera error';
+      if (err instanceof DOMException && err.name === 'NotAllowedError') errorMessage = 'Camera permission denied.';
+      else if (err instanceof DOMException && err.name === 'NotFoundError') errorMessage = 'No camera found.';
+      else if (err instanceof Error) errorMessage = err.message || 'Camera error';
       
       setCameraError(errorMessage);
       toast({ title: 'Camera Error', description: errorMessage, variant: 'destructive' });
@@ -448,7 +477,7 @@ export default function AgedBatteries() {
     return () => {
       stopCameraScanner();
     };
-  }, []);
+  }, [stopCameraScanner]);
 
   const handleCompleteBatch = async () => {
     // Defensive validation
@@ -748,6 +777,59 @@ export default function AgedBatteries() {
     setIsScrapDialogOpen(true);
   };
 
+  const syncScrapLedgerEntry = async (battery: AgedBattery, scrapValue: number) => {
+    if (!user?.id) {
+      throw new Error('Missing user for scrap ledger sync');
+    }
+
+    const customerName = battery.customer?.name?.trim() || 'Aged Battery Inventory';
+    const basePayload = {
+      customer_name: customerName,
+      scrap_item: inferScrapCategory(battery.product),
+      scrap_model: buildAgedScrapModelLabel(battery),
+      scrap_value: scrapValue,
+      quantity: 1,
+      aged_battery_id: battery.id,
+    };
+
+    const { data: existingEntries, error: existingError } = await supabase
+      .from('scrap_entries')
+      .select('id')
+      .eq('aged_battery_id', battery.id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (existingError) {
+      throw existingError;
+    }
+
+    const existingEntryId = existingEntries?.[0]?.id;
+
+    if (existingEntryId) {
+      const { error: updateError } = await supabase
+        .from('scrap_entries')
+        .update(basePayload)
+        .eq('id', existingEntryId);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      return;
+    }
+
+    const { error: insertError } = await supabase
+      .from('scrap_entries')
+      .insert({
+        ...basePayload,
+        recorded_by: user.id,
+      });
+
+    if (insertError) {
+      throw insertError;
+    }
+  };
+
   const handleScrap = async () => {
     if (!user?.id) {
       toast({ title: 'Not authenticated', variant: 'destructive' });
@@ -758,10 +840,11 @@ export default function AgedBatteries() {
 
     setProcessing(true);
     try {
+      const scrapValue = parseFloat(scrapForm.scrap_value) || 0;
       const payload = {
         p_aged_id: selectedBattery.id,
         p_remarks: scrapForm.remarks || '',
-        p_scrap_value: parseFloat(scrapForm.scrap_value) || 0,
+        p_scrap_value: scrapValue,
         p_user: user.id
       };
 
@@ -770,6 +853,23 @@ export default function AgedBatteries() {
       );
 
       if (error) throw error;
+
+      try {
+        await syncScrapLedgerEntry(selectedBattery, scrapValue);
+      } catch (syncError: unknown) {
+        const syncMessage = syncError instanceof Error ? syncError.message : 'Scrap register was not updated';
+        console.error('Scrap ledger sync failed:', syncError);
+        toast({
+          title: 'Battery scrapped, but ledger sync failed',
+          description: syncMessage,
+          variant: 'destructive'
+        });
+        setIsScrapDialogOpen(false);
+        setSelectedBattery(null);
+        setScrapForm({ scrap_value: '', remarks: '' });
+        fetchData();
+        return;
+      }
 
       toast({ title: 'Battery scrapped' });
       setIsScrapDialogOpen(false);
@@ -819,7 +919,7 @@ export default function AgedBatteries() {
 
   const canRent = (status: AgedBatteryStatus) => status === 'IN_STOCK' || status === 'RETURNED';
   const canReturn = (status: AgedBatteryStatus) => status === 'RENTED';
-  const canScrap = (status: AgedBatteryStatus) => status !== 'RENTED';
+  const canScrap = (status: AgedBatteryStatus) => status === 'IN_STOCK' || status === 'RETURNED';
   const canSell = (status: AgedBatteryStatus) => status === 'IN_STOCK' || status === 'RETURNED';
 
   const handleDeleteSale = async (battery: AgedBattery) => {
@@ -896,13 +996,15 @@ export default function AgedBatteries() {
         </div>
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>
-          <TabsList className="bg-muted/50">
-            <TabsTrigger value="inventory">Inventory</TabsTrigger>
-            <TabsTrigger value="transfer">Transfer Batch</TabsTrigger>
-            <TabsTrigger value="transactions">Sales</TabsTrigger>
-            <TabsTrigger value="rentals">Rentals</TabsTrigger>
-            <TabsTrigger value="analytics">Analytics</TabsTrigger>
-          </TabsList>
+          <div className="overflow-x-auto pb-1">
+            <TabsList className="w-max min-w-full bg-muted/50">
+              <TabsTrigger value="inventory">Inventory</TabsTrigger>
+              <TabsTrigger value="transfer">Transfer Batch</TabsTrigger>
+              <TabsTrigger value="transactions">Sales</TabsTrigger>
+              <TabsTrigger value="rentals">Rentals</TabsTrigger>
+              <TabsTrigger value="analytics">Analytics</TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="inventory" className="space-y-4">
             <div className="flex items-center gap-4">
@@ -918,45 +1020,46 @@ export default function AgedBatteries() {
             </div>
 
             <div className="rounded-xl border bg-white dark:bg-[#111827]/80 backdrop-blur-xl overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-muted/50">
-                    <TableHead>Barcode</TableHead>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Batch</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Claimed</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loading ? (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8">
-                        <Loader2 className="h-6 w-6 animate-spin mx-auto" />
-                      </TableCell>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead>Barcode</TableHead>
+                      <TableHead>Product</TableHead>
+                      <TableHead>Batch</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Claimed</TableHead>
+                      <TableHead>Customer</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ) : filteredBatteries.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                        No aged batteries found
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredBatteries.map((battery) => {
-                      const statusStyle = getStatusColor(battery.status);
-                      return (
-                        <TableRow key={battery.id}>
-                          <TableCell className="font-mono text-sm">
-                            {battery.barcode || '-'}
-                          </TableCell>
-                          <TableCell>
-                            <div>
-                              <div className="font-medium">{battery.product?.name || 'N/A'}</div>
-                              <div className="text-xs text-muted-foreground">{battery.product?.model}</div>
-                            </div>
-                          </TableCell>
+                  </TableHeader>
+                  <TableBody>
+                    {loading ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8">
+                          <Loader2 className="h-6 w-6 animate-spin mx-auto" />
+                        </TableCell>
+                      </TableRow>
+                    ) : filteredBatteries.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          No aged batteries found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      filteredBatteries.map((battery) => {
+                        const statusStyle = getStatusColor(battery.status);
+                        return (
+                          <TableRow key={battery.id}>
+                            <TableCell className="font-mono text-sm">
+                              {battery.barcode || '-'}
+                            </TableCell>
+                            <TableCell>
+                              <div>
+                                <div className="font-medium">{battery.product?.name || 'N/A'}</div>
+                                <div className="text-xs text-muted-foreground">{battery.product?.model}</div>
+                              </div>
+                            </TableCell>
                           <TableCell className="text-sm">
                             {battery.batch?.batch_name || '-'}
                           </TableCell>
@@ -1051,12 +1154,13 @@ export default function AgedBatteries() {
                               )}
                             </div>
                           </TableCell>
-                        </TableRow>
-                      );
-                    })
-                  )}
-                </TableBody>
-              </Table>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           </TabsContent>
 

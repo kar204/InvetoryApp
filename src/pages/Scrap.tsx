@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Recycle, PackageOpen, Check, TrendingUp, TrendingDown, Trash2 } from 'lucide-react';
+import { Search, Recycle, PackageOpen, Check, TrendingUp, TrendingDown, Trash2, Plus, X } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,7 +39,31 @@ interface ScrapEntry {
   marked_out_by: string | null;
   recorded_by: string;
   created_at: string;
+  aged_battery_id?: string | null;
 }
+
+type ScrapCategory = (typeof SCRAP_CATEGORIES)[number];
+
+interface ScrapFormLine {
+  id: string;
+  scrap_item: ScrapCategory | '';
+  scrap_model: string;
+  scrap_value: string;
+  quantity: string;
+}
+
+interface ScrapFormState {
+  customer_name: string;
+  lines: ScrapFormLine[];
+}
+
+const createScrapFormLine = (): ScrapFormLine => ({
+  id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  scrap_item: '',
+  scrap_model: '',
+  scrap_value: '',
+  quantity: '1',
+});
 
 export default function Scrap() {
   const { user, hasAnyRole } = useAuth();
@@ -50,8 +74,14 @@ export default function Scrap() {
   const [isRecordOpen, setIsRecordOpen] = useState(false);
   const [entryToMarkOut, setEntryToMarkOut] = useState<ScrapEntry | null>(null);
   const [entryToDelete, setEntryToDelete] = useState<ScrapEntry | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const [form, setForm] = useState({ customer_name: '', scrap_item: '', scrap_model: '', scrap_value: '', quantity: '1' });
+  const initialFormState: ScrapFormState = {
+    customer_name: '',
+    lines: [createScrapFormLine()],
+  };
+
+  const [form, setForm] = useState<ScrapFormState>(initialFormState);
 
   const canManage = hasAnyRole(['admin', 'counter_staff', 'scrap_manager']);
 
@@ -70,26 +100,90 @@ export default function Scrap() {
     }
   };
 
+  const resetForm = () => {
+    setForm({
+      customer_name: '',
+      lines: [createScrapFormLine()],
+    });
+  };
+
+  const addFormLine = () => {
+    setForm((currentForm) => ({
+      ...currentForm,
+      lines: [...currentForm.lines, createScrapFormLine()],
+    }));
+  };
+
+  const removeFormLine = (lineId: string) => {
+    setForm((currentForm) => ({
+      ...currentForm,
+      lines: currentForm.lines.length === 1
+        ? currentForm.lines
+        : currentForm.lines.filter((line) => line.id !== lineId),
+    }));
+  };
+
+  const updateFormLine = (lineId: string, field: keyof Omit<ScrapFormLine, 'id'>, value: string) => {
+    setForm((currentForm) => ({
+      ...currentForm,
+      lines: currentForm.lines.map((line) => (
+        line.id === lineId
+          ? { ...line, [field]: value }
+          : line
+      )),
+    }));
+  };
+
   const handleRecord = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+
+    const customerName = form.customer_name.trim();
+    const activeLines = form.lines.filter((line) =>
+      line.scrap_item || line.scrap_model.trim() || line.scrap_value.trim() || line.quantity.trim()
+    );
+
+    if (!customerName) {
+      toast({ title: 'Customer name is required', variant: 'destructive' });
+      return;
+    }
+
+    if (activeLines.length === 0) {
+      toast({ title: 'Add at least one scrap item', variant: 'destructive' });
+      return;
+    }
+
+    const hasIncompleteLine = activeLines.some((line) => !line.scrap_item || !line.scrap_model.trim());
+    if (hasIncompleteLine) {
+      toast({ title: 'Each scrap row needs a category and model', variant: 'destructive' });
+      return;
+    }
+
+    const payload = activeLines.map((line) => ({
+      customer_name: customerName,
+      scrap_item: line.scrap_item,
+      scrap_model: line.scrap_model.trim(),
+      scrap_value: parseFloat(line.scrap_value) || 0,
+      quantity: Math.max(1, parseInt(line.quantity) || 1),
+      recorded_by: user.id,
+    }));
+
     try {
-      const { error } = await supabase.from('scrap_entries').insert({
-        customer_name: form.customer_name.trim(),
-        scrap_item: form.scrap_item,
-        scrap_model: form.scrap_model.trim(),
-        scrap_value: parseFloat(form.scrap_value) || 0,
-        quantity: parseInt(form.quantity) || 1,
-        recorded_by: user.id,
-      });
+      setSubmitting(true);
+      const { error } = await supabase.from('scrap_entries').insert(payload);
       if (error) throw error;
-      toast({ title: 'Scrap entry recorded' });
+      toast({
+        title: payload.length === 1 ? 'Scrap entry recorded' : 'Scrap entries recorded',
+        description: `${payload.length} item(s) added to the scrap register.`,
+      });
       setIsRecordOpen(false);
-      setForm({ customer_name: '', scrap_item: '', scrap_model: '', scrap_value: '', quantity: '1' });
+      resetForm();
       fetchEntries();
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'An error occurred';
       toast({ title: 'Error', description: msg, variant: 'destructive' });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -156,7 +250,7 @@ export default function Scrap() {
             <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs py-4">Category</TableHead>
             <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs py-4">Model</TableHead>
             <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs text-right py-4">Qty</TableHead>
-            <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs text-right py-4">Value (₹)</TableHead>
+            <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs text-right py-4">Value (Rs.)</TableHead>
             <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs py-4">Date</TableHead>
             <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs py-4">Status</TableHead>
             {canManage && <TableHead className="font-semibold text-slate-600 dark:text-slate-500 tracking-wider uppercase text-xs w-[180px] py-4">Action</TableHead>}
@@ -175,7 +269,7 @@ export default function Scrap() {
               <TableCell><Badge variant="outline" className="bg-white dark:bg-[#111827] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-white/5">{entry.scrap_item}</Badge></TableCell>
               <TableCell className="text-slate-600 dark:text-slate-500 dark:text-slate-400">{entry.scrap_model}</TableCell>
               <TableCell className="text-right font-bold text-slate-900 dark:text-white tabular-nums drop-shadow-sm">{entry.quantity}</TableCell>
-              <TableCell className="text-right font-medium text-emerald-400 tabular-nums">₹{entry.scrap_value.toLocaleString('en-IN')}</TableCell>
+              <TableCell className="text-right font-medium text-emerald-400 tabular-nums">Rs. {entry.scrap_value.toLocaleString('en-IN')}</TableCell>
               <TableCell className="text-slate-600 dark:text-slate-500 text-sm tabular-nums">{format(new Date(entry.created_at), 'dd/MM/yyyy')}</TableCell>
               <TableCell>
                 <Badge variant="outline" className={entry.status === 'IN' ? 'bg-[#4F8CFF]/10 text-[#4F8CFF] border-[#4F8CFF]/20 font-bold tracking-wider' : 'bg-slate-500/10 text-slate-600 dark:text-slate-500 dark:text-slate-400 border-slate-500/20 font-bold tracking-wider'}>
@@ -212,41 +306,105 @@ export default function Scrap() {
             <p className="text-muted-foreground">Record and manage scrap entries</p>
           </div>
           {canManage && (
-            <Dialog open={isRecordOpen} onOpenChange={setIsRecordOpen}>
+            <Dialog open={isRecordOpen} onOpenChange={(open) => {
+              setIsRecordOpen(open);
+              if (!open) {
+                setSubmitting(false);
+                resetForm();
+              }
+            }}>
               <DialogTrigger asChild>
                 <Button><Recycle className="h-4 w-4 mr-2" />Record Scrap</Button>
               </DialogTrigger>
-              <DialogContent>
-                <DialogHeader><DialogTitle>Record Scrap Entry</DialogTitle></DialogHeader>
-                <form onSubmit={handleRecord} className="space-y-4">
+              <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+                <DialogHeader><DialogTitle>Record Scrap Entries</DialogTitle></DialogHeader>
+                <form onSubmit={handleRecord} className="space-y-5">
                   <div className="space-y-2">
                     <Label>Customer Name</Label>
-                    <Input value={form.customer_name} onChange={e => setForm({ ...form, customer_name: e.target.value })} required />
+                    <Input
+                      value={form.customer_name}
+                      onChange={(e) => setForm({ ...form, customer_name: e.target.value })}
+                      placeholder="Enter source or customer name"
+                      required
+                    />
                   </div>
-                  <div className="space-y-2">
-                    <Label>Scrap Category</Label>
-                    <Select value={form.scrap_item} onValueChange={v => setForm({ ...form, scrap_item: v })} required>
-                      <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
-                      <SelectContent>
-                        {SCRAP_CATEGORIES.map(cat => (
-                          <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-medium">Scrap Lines</Label>
+                      <Button type="button" variant="outline" size="sm" onClick={addFormLine}>
+                        <Plus className="mr-2 h-4 w-4" />
+                        Add Line
+                      </Button>
+                    </div>
+                    <div className="space-y-3">
+                      {form.lines.map((line, index) => (
+                        <div key={line.id} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-[#111827]/70">
+                          <div className="flex items-center justify-between">
+                            <Badge variant="outline">Line {index + 1}</Badge>
+                            {form.lines.length > 1 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => removeFormLine(line.id)}
+                                className="text-red-500 hover:bg-red-500/10 hover:text-red-400"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label>Category</Label>
+                              <Select
+                                value={line.scrap_item}
+                                onValueChange={(value) => updateFormLine(line.id, 'scrap_item', value)}
+                              >
+                                <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+                                <SelectContent>
+                                  {SCRAP_CATEGORIES.map((category) => (
+                                    <SelectItem key={category} value={category}>{category}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Model</Label>
+                              <Input
+                                value={line.scrap_model}
+                                onChange={(e) => updateFormLine(line.id, 'scrap_model', e.target.value)}
+                                placeholder="Enter model"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label>Quantity</Label>
+                              <Input
+                                type="number"
+                                min="1"
+                                value={line.quantity}
+                                onChange={(e) => updateFormLine(line.id, 'quantity', e.target.value)}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Scrap Value (Rs.) <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                value={line.scrap_value}
+                                onChange={(e) => updateFormLine(line.id, 'scrap_value', e.target.value)}
+                                placeholder="Enter value"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Model</Label>
-                    <Input value={form.scrap_model} onChange={e => setForm({ ...form, scrap_model: e.target.value })} required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Quantity</Label>
-                    <Input type="number" min="1" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Scrap Value (₹) <span className="text-muted-foreground text-xs">(optional)</span></Label>
-                    <Input type="number" value={form.scrap_value} onChange={e => setForm({ ...form, scrap_value: e.target.value })} min="0" />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={!form.scrap_item}>Record Entry</Button>
+                  <Button type="submit" className="w-full" disabled={submitting}>
+                    {submitting ? 'Saving...' : form.lines.length === 1 ? 'Record Entry' : `Record ${form.lines.length} Entries`}
+                  </Button>
                 </form>
               </DialogContent>
             </Dialog>

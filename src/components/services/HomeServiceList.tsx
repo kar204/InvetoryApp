@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { AlertCircle, Battery, ChevronRight, MapPin, Phone, Zap } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { Card, CardContent } from '@/components/ui/card';
@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { HomeServiceRequest, Profile } from '@/types/database';
+import { HomeServiceRequest, HomeServiceResolution, Profile } from '@/types/database';
 
 interface HomeServiceListProps {
   viewMode: 'service_desk' | 'technician' | 'counter_staff';
@@ -14,6 +14,16 @@ interface HomeServiceListProps {
   refreshTrigger?: number;
   initialSearch?: string;
 }
+
+type HomeServiceRequestResolution = Pick<HomeServiceResolution, 'request_id' | 'total_amount'> & {
+  battery_price: number | null;
+  battery_within_warranty: boolean | null;
+  inverter_price: number | null;
+};
+
+type HomeServiceRequestWithResolution = HomeServiceRequest & {
+  resolution: HomeServiceRequestResolution | null;
+};
 
 const statusColors: Record<string, string> = {
   OPEN: 'bg-amber-500/10 text-amber-500 border-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.2)]',
@@ -32,13 +42,14 @@ const statusFilterOptions: Array<'all' | HomeServiceRequest['status']> = ['all',
 
 export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, initialSearch }: HomeServiceListProps) {
   const { user } = useAuth();
-  const [requests, setRequests] = useState<any[]>([]);
+  const [requests, setRequests] = useState<HomeServiceRequestWithResolution[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(initialSearch ?? '');
   const [statusFilter, setStatusFilter] = useState<'all' | HomeServiceRequest['status']>('all');
   const deferredSearch = useDeferredValue(search.trim());
-  const fetchRequestsRef = useRef<() => Promise<void>>(async () => {});
+  const hasFetchedRef = useRef(false);
+  const formatCurrency = (amount: number) => `Rs. ${amount.toLocaleString('en-IN')}`;
 
   useEffect(() => {
     if (typeof initialSearch === 'string') {
@@ -46,7 +57,7 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
     }
   }, [initialSearch]);
 
-  const fetchRequests = async (showLoading = false) => {
+  const fetchRequests = useCallback(async (showLoading = false) => {
     try {
       if (showLoading) {
         setLoading(true);
@@ -78,47 +89,39 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
 
       const { data, error } = await query;
       if (error) throw error;
+      const requestRows = (data as HomeServiceRequest[] | null) || [];
 
-      // Fetch resolutions for these requests
-      const requestIds = (data || []).map((r: any) => r.id);
-      let resolutionsMap: Record<string, any> = {};
-      
+      const requestIds = requestRows.map((request) => request.id);
+      const resolutionsMap: Record<string, HomeServiceRequestResolution> = {};
+
       if (requestIds.length > 0) {
         const { data: resolutions } = await supabase
           .from('home_service_resolutions')
           .select('*')
           .in('request_id', requestIds);
-        
-        (resolutions || []).forEach((res: any) => {
-          resolutionsMap[res.request_id] = res;
+
+        ((resolutions as HomeServiceRequestResolution[] | null) || []).forEach((resolution) => {
+          resolutionsMap[resolution.request_id] = resolution;
         });
       }
 
-      // Merge resolutions with requests
-      const requestsWithResolutions = (data || []).map((req: any) => ({
-        ...req,
-        resolution: resolutionsMap[req.id] || null
-      }));
-
-      setRequests(requestsWithResolutions);
+      setRequests(
+        requestRows.map((request) => ({
+          ...request,
+          resolution: resolutionsMap[request.id] || null,
+        })),
+      );
     } catch (error) {
       console.error('Error fetching requests:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [deferredSearch, statusFilter, user?.id, viewMode]);
 
-  fetchRequestsRef.current = async () => fetchRequests(false);
-
-  // Initial load only
   useEffect(() => {
-    fetchRequests(true);
-  }, []);
-
-  // Refetch on filter changes (no loading state)
-  useEffect(() => {
-    fetchRequests(false);
-  }, [deferredSearch, refreshTrigger, statusFilter, user?.id, viewMode]);
+    fetchRequests(!hasFetchedRef.current);
+    hasFetchedRef.current = true;
+  }, [fetchRequests, refreshTrigger]);
 
   // Fetch profiles once
   useEffect(() => {
@@ -129,7 +132,6 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
     fetchProfiles();
   }, []);
 
-  // Realtime updates (no loading state)
   useEffect(() => {
     const channel = supabase
       .channel(`home-service-requests-realtime-${viewMode}-${user?.id || 'anon'}`)
@@ -144,14 +146,14 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
     return () => {
       channel.unsubscribe();
     };
-  }, [viewMode, user?.id]);
+  }, [fetchRequests, viewMode, user?.id]);
 
   const getProfileName = (userId: string) => {
     return profiles.find((p) => p.user_id === userId)?.name || 'Unassigned';
   };
 
   if (loading) {
-    return <div className="text-center py-8">Loading requests...</div>;
+    return <div className="py-8 text-center">Loading requests...</div>;
   }
 
   return (
@@ -235,8 +237,10 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
                           <div className="flex items-center gap-2">
                             <Battery className="h-3.5 w-3.5" />
                             <span>Battery: {request.battery_model}</span>
-                            {request.resolution?.battery_price > 0 && (
-                              <span className="text-emerald-500 font-semibold">₹{request.resolution.battery_price.toLocaleString('en-IN')}</span>
+                            {(request.resolution?.battery_price || 0) > 0 && (
+                              <span className="font-semibold text-emerald-500">
+                                {formatCurrency(request.resolution?.battery_price || 0)}
+                              </span>
                             )}
                             {request.resolution?.battery_within_warranty && (
                               <Badge className="bg-emerald-500/10 text-emerald-500 text-[10px]">Warranty</Badge>
@@ -247,8 +251,10 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
                           <div className="flex items-center gap-2">
                             <Zap className="h-3.5 w-3.5" />
                             <span>Inverter: {request.inverter_model}</span>
-                            {request.resolution?.inverter_price > 0 && (
-                              <span className="text-emerald-500 font-semibold">₹{request.resolution.inverter_price.toLocaleString('en-IN')}</span>
+                            {(request.resolution?.inverter_price || 0) > 0 && (
+                              <span className="font-semibold text-emerald-500">
+                                {formatCurrency(request.resolution?.inverter_price || 0)}
+                              </span>
                             )}
                           </div>
                         )}
@@ -258,16 +264,20 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
                             <span>Spare: {request.spare_supplied}</span>
                           </div>
                         )}
-                        {request.resolution?.total_amount > 0 && (
-                          <div className="flex items-center gap-2 pt-1 border-t mt-1">
+                        {(request.resolution?.total_amount || 0) > 0 && (
+                          <div className="mt-1 flex items-center gap-2 border-t pt-1">
                             <span className="font-bold text-emerald-600">
-                              Total: ₹{request.resolution.total_amount.toLocaleString('en-IN')}
+                              Total: {formatCurrency(request.resolution?.total_amount || 0)}
                             </span>
-                            {request.resolution?.battery_price > 0 && (
-                              <span className="text-slate-500">(Battery: ₹{request.resolution.battery_price.toLocaleString('en-IN')})</span>
+                            {(request.resolution?.battery_price || 0) > 0 && (
+                              <span className="text-slate-500">
+                                (Battery: {formatCurrency(request.resolution?.battery_price || 0)})
+                              </span>
                             )}
-                            {request.resolution?.inverter_price > 0 && (
-                              <span className="text-slate-500">(Inverter: ₹{request.resolution.inverter_price.toLocaleString('en-IN')})</span>
+                            {(request.resolution?.inverter_price || 0) > 0 && (
+                              <span className="text-slate-500">
+                                (Inverter: {formatCurrency(request.resolution?.inverter_price || 0)})
+                              </span>
                             )}
                           </div>
                         )}

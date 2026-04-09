@@ -55,9 +55,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const fetchUserData = async (userId: string) => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
-    
     try {
       const [profileResult, rolesResult] = await Promise.all([
         supabase.from('profiles').select('*').eq('user_id', userId).maybeSingle(),
@@ -71,13 +68,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (rolesResult.data) {
         setRoles(rolesResult.data.map(r => r.role as AppRole));
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error fetching user data:', error);
-      if (error.name !== 'AbortError') {
+      if (!(error instanceof Error) || error.name !== 'AbortError') {
         // Non-timeout errors logged, but proceed
       }
     } finally {
-      clearTimeout(timeoutId);
       setLoading(false);
     }
   };

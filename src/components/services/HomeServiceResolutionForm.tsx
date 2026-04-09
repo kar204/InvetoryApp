@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Loader, X, Battery, Zap } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -48,14 +48,19 @@ export function HomeServiceResolutionForm({
   // Payment state
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'UPI' | ''>('');
 
-  useEffect(() => {
-    if (isOpen && request) {
-      loadItems();
-      resetStates();
-    }
-  }, [isOpen, request?.id]);
+  const resetStates = useCallback(() => {
+    setBatteryItemWarranty({});
+    setBatteryItemPrices({});
+    setBatteryItemNotes({});
+    setBatteryItemResolved({});
+    setInverterItemResolved({});
+    setInverterItemPrices({});
+    setInverterItemNotes({});
+    setGeneralNotes('');
+    setPaymentMethod('');
+  }, []);
 
-  const loadItems = async () => {
+  const loadItems = useCallback(async () => {
     if (!request) return;
     try {
       const { data } = await supabase
@@ -112,19 +117,14 @@ export function HomeServiceResolutionForm({
       console.error('Error loading items:', error);
       setItems([]);
     }
-  };
+  }, [request]);
 
-  const resetStates = () => {
-    setBatteryItemWarranty({});
-    setBatteryItemPrices({});
-    setBatteryItemNotes({});
-    setBatteryItemResolved({});
-    setInverterItemResolved({});
-    setInverterItemPrices({});
-    setInverterItemNotes({});
-    setGeneralNotes('');
-    setPaymentMethod('');
-  };
+  useEffect(() => {
+    if (isOpen && request) {
+      resetStates();
+      loadItems();
+    }
+  }, [isOpen, loadItems, request, resetStates]);
 
   const batteryItems = items.filter(i => i.item_type === 'BATTERY');
   const inverterItems = items.filter(i => i.item_type === 'INVERTER');

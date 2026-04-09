@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Wrench, Package, TrendingUp, Download, Activity, ShoppingCart, Recycle, CheckCircle, Battery, Zap, Plug, ShoppingCart as Cart, Sun, Box, Settings } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -14,10 +14,72 @@ import { downloadCSV, formatDashboardStatsForExport } from '@/utils/exportUtils'
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, Cell, Tooltip as RechartsTooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { usePollingRefresh } from '@/hooks/usePollingRefresh';
 
+type SalesRange = 'day' | 'week' | 'month' | 'quarter' | 'year';
+
+interface DashboardStats {
+  openTickets: number;
+  closedToday: number;
+  totalStock: number;
+  lowStockCount: number;
+  inProgressTickets: number;
+  homeOpenRequests: number;
+  homeInProgressRequests: number;
+  homeClosedToday: number;
+  todaySalesCount: number;
+  todaySalesRevenue: number;
+  weekSalesCount: number;
+  weekSalesRevenue: number;
+  monthSalesCount: number;
+  monthSalesRevenue: number;
+  scrapInCount: number;
+  scrapInValue: number;
+  todayStockIn: number;
+  todayStockOut: number;
+  categoryStock: Record<string, number>;
+}
+
+interface SalesTrendPoint {
+  name: string;
+  Units: number;
+}
+
+interface SaleSummaryRow {
+  id: string;
+  created_at: string;
+}
+
+interface SaleItemQuantityRow {
+  sale_id: string;
+  quantity: number | null;
+}
+
+interface SaleRevenueItemRow {
+  price: number | null;
+  quantity: number | null;
+}
+
+interface ScrapSummaryRow {
+  scrap_value: number | null;
+  status: string | null;
+  quantity: number | null;
+}
+
+interface StockQuantityRow {
+  quantity: number | null;
+}
+
+interface TooltipPayloadRow {
+  dataKey?: string;
+  name?: string;
+  value?: number | string;
+  color?: string;
+  payload?: { name?: string };
+}
+
 export default function Dashboard() {
   const { profile } = useAuth();
   const navigate = useNavigate();
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<DashboardStats>({
     openTickets: 0,
     closedToday: 0,
     totalStock: 0,
@@ -36,96 +98,74 @@ export default function Dashboard() {
     scrapInValue: 0,
     todayStockIn: 0,
     todayStockOut: 0,
-    salesHistory: [] as any[],
-    categoryStock: {} as Record<string, number>,
+    categoryStock: {},
   });
-  const [salesRange, setSalesRange] = useState<'day' | 'week' | 'month' | 'quarter' | 'year'>('week');
-  const [salesTrend, setSalesTrend] = useState<any[]>([]);
+  const [salesRange, setSalesRange] = useState<SalesRange>('week');
+  const [salesTrend, setSalesTrend] = useState<SalesTrendPoint[]>([]);
   const [recentTickets, setRecentTickets] = useState<ServiceTicket[]>([]);
   const [lowStockItems, setLowStockItems] = useState<WarehouseStock[]>([]);
   const [loading, setLoading] = useState(true);
+  const salesRangeRef = useRef<SalesRange>(salesRange);
 
   useEffect(() => {
-    fetchDashboardData();
-
-    const ticketChannel = supabase
-      .channel('dashboard-tickets')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_tickets' }, () => {
-        fetchDashboardData();
-      })
-      .subscribe();
-
-    const homeServiceChannel = supabase
-      .channel('dashboard-home-service')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'home_service_requests' }, () => {
-        fetchDashboardData();
-      })
-      .subscribe();
-
-    const stockChannel = supabase
-      .channel('dashboard-stock')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'warehouse_stock' }, () => {
-        fetchDashboardData();
-      })
-      .subscribe();
-
-    const saleChannel = supabase
-      .channel('dashboard-sales')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'warehouse_sales' }, () => {
-        fetchDashboardData();
-        fetchSalesTrend(salesRange);
-      })
-      .subscribe();
-
-    return () => {
-      ticketChannel.unsubscribe();
-      homeServiceChannel.unsubscribe();
-      stockChannel.unsubscribe();
-      saleChannel.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    fetchSalesTrend(salesRange);
+    salesRangeRef.current = salesRange;
   }, [salesRange]);
 
-  const fetchSalesTrend = async (range: 'day' | 'week' | 'month' | 'quarter' | 'year') => {
+  const fetchSalesTrend = useCallback(async (range: SalesRange) => {
     try {
       const now = new Date();
-      let startDate = new Date();
+      const startDate = new Date();
       let groupFormat: (d: Date) => string;
       let labelFormat: (d: Date) => string;
-      let points: Date[] = [];
+      const points: Date[] = [];
 
       if (range === 'day') {
         startDate.setHours(0, 0, 0, 0);
-        // Hourly points
         for (let h = 0; h < 24; h += 3) {
-          const d = new Date(startDate); d.setHours(h); points.push(d);
+          const point = new Date(startDate);
+          point.setHours(h);
+          points.push(point);
         }
-        groupFormat = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${Math.floor(d.getHours() / 3)}`;
-        labelFormat = (d) => `${d.getHours()}:00`;
+        groupFormat = (date) => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${Math.floor(date.getHours() / 3)}`;
+        labelFormat = (date) => `${date.getHours()}:00`;
       } else if (range === 'week') {
-        startDate.setDate(now.getDate() - 6); startDate.setHours(0, 0, 0, 0);
-        for (let i = 6; i >= 0; i--) { const d = new Date(now); d.setDate(now.getDate() - i); d.setHours(0, 0, 0, 0); points.push(d); }
-        groupFormat = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-        labelFormat = (d) => d.toLocaleDateString('en-IN', { weekday: 'short' });
+        startDate.setDate(now.getDate() - 6);
+        startDate.setHours(0, 0, 0, 0);
+        for (let i = 6; i >= 0; i -= 1) {
+          const point = new Date(now);
+          point.setDate(now.getDate() - i);
+          point.setHours(0, 0, 0, 0);
+          points.push(point);
+        }
+        groupFormat = (date) => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+        labelFormat = (date) => date.toLocaleDateString('en-IN', { weekday: 'short' });
       } else if (range === 'month') {
-        startDate.setDate(1); startDate.setHours(0, 0, 0, 0);
+        startDate.setDate(1);
+        startDate.setHours(0, 0, 0, 0);
         const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-        for (let i = 1; i <= daysInMonth; i += 5) { const d = new Date(now.getFullYear(), now.getMonth(), i); points.push(d); }
-        groupFormat = (d) => `${d.getFullYear()}-${d.getMonth()}-${Math.ceil(d.getDate() / 5)}`;
-        labelFormat = (d) => `${d.getDate()} ${d.toLocaleDateString('en-IN', { month: 'short' })}`;
+        for (let i = 1; i <= daysInMonth; i += 5) {
+          points.push(new Date(now.getFullYear(), now.getMonth(), i));
+        }
+        groupFormat = (date) => `${date.getFullYear()}-${date.getMonth()}-${Math.ceil(date.getDate() / 5)}`;
+        labelFormat = (date) => `${date.getDate()} ${date.toLocaleDateString('en-IN', { month: 'short' })}`;
       } else if (range === 'quarter') {
-        startDate.setMonth(now.getMonth() - 2); startDate.setDate(1); startDate.setHours(0, 0, 0, 0);
-        for (let i = 2; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); points.push(d); }
-        groupFormat = (d) => `${d.getFullYear()}-${d.getMonth()}`;
-        labelFormat = (d) => d.toLocaleDateString('en-IN', { month: 'short' });
+        startDate.setMonth(now.getMonth() - 2);
+        startDate.setDate(1);
+        startDate.setHours(0, 0, 0, 0);
+        for (let i = 2; i >= 0; i -= 1) {
+          points.push(new Date(now.getFullYear(), now.getMonth() - i, 1));
+        }
+        groupFormat = (date) => `${date.getFullYear()}-${date.getMonth()}`;
+        labelFormat = (date) => date.toLocaleDateString('en-IN', { month: 'short' });
       } else {
-        startDate.setMonth(0); startDate.setDate(1); startDate.setHours(0, 0, 0, 0);
-        for (let i = 0; i < 12; i++) { const d = new Date(now.getFullYear(), i, 1); points.push(d); }
-        groupFormat = (d) => `${d.getFullYear()}-${d.getMonth()}`;
-        labelFormat = (d) => d.toLocaleDateString('en-IN', { month: 'short' });
+        startDate.setMonth(0);
+        startDate.setDate(1);
+        startDate.setHours(0, 0, 0, 0);
+        for (let i = 0; i < 12; i += 1) {
+          points.push(new Date(now.getFullYear(), i, 1));
+        }
+        groupFormat = (date) => `${date.getFullYear()}-${date.getMonth()}`;
+        labelFormat = (date) => date.toLocaleDateString('en-IN', { month: 'short' });
       }
 
       const { data: salesData } = await supabase
@@ -134,37 +174,38 @@ export default function Dashboard() {
         .gte('created_at', startDate.toISOString())
         .order('created_at');
 
-      const saleIds = (salesData || []).map((s: any) => s.id);
+      const saleRows = (salesData || []) as SaleSummaryRow[];
+      const saleIds = saleRows.map((sale) => sale.id);
       const itemsBySale: Record<string, number> = {};
+
       if (saleIds.length > 0) {
         const { data: saleItems } = await supabase
           .from('warehouse_sale_items')
           .select('sale_id, quantity')
           .in('sale_id', saleIds);
-        (saleItems || []).forEach((item: any) => {
+
+        ((saleItems || []) as SaleItemQuantityRow[]).forEach((item) => {
           itemsBySale[item.sale_id] = (itemsBySale[item.sale_id] || 0) + (item.quantity || 0);
         });
       }
 
       const grouped: Record<string, number> = {};
-      (salesData || []).forEach((s: any) => {
-        const d = new Date(s.created_at);
-        const key = groupFormat(d);
-        grouped[key] = (grouped[key] || 0) + (itemsBySale[s.id] || 0);
+      saleRows.forEach((sale) => {
+        const date = new Date(sale.created_at);
+        const key = groupFormat(date);
+        grouped[key] = (grouped[key] || 0) + (itemsBySale[sale.id] || 0);
       });
 
-      const trend = points.map(d => ({
-        name: labelFormat(d),
-        Units: grouped[groupFormat(d)] || 0,
-      }));
-
-      setSalesTrend(trend);
+      setSalesTrend(points.map((date) => ({
+        name: labelFormat(date),
+        Units: grouped[groupFormat(date)] || 0,
+      })));
     } catch (err) {
       console.error('Error fetching sales trend:', err);
     }
-  };
+  }, []);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -207,54 +248,45 @@ export default function Dashboard() {
         supabase.from('stock_transactions').select('quantity').eq('transaction_type', 'OUT').gte('created_at', today.toISOString()),
       ]);
 
-      const stockData = (stockRes.data || []) as (WarehouseStock & { product: Product })[];
-      const lowStock = stockData.filter(s => s.quantity < 5);
-      const totalStock = stockData.reduce((acc, s) => acc + s.quantity, 0);
+      const stockData = (stockRes.data || []) as WarehouseStock[];
+      const lowStock = stockData.filter((stockItem) => stockItem.quantity < 5);
+      const totalStock = stockData.reduce((sum, stockItem) => sum + stockItem.quantity, 0);
 
-      // Category-wise stock totals
       const categoryStock: Record<string, number> = {};
-      stockData.forEach(s => {
-        const cat = (s.product as any)?.category || 'Other';
-        categoryStock[cat] = (categoryStock[cat] || 0) + s.quantity;
+      stockData.forEach((stockItem) => {
+        const category = stockItem.product?.category || 'Other';
+        categoryStock[category] = (categoryStock[category] || 0) + stockItem.quantity;
       });
 
-      // Today's sales
-      const todaySaleIds = (todaySalesRes.data || []).map((s: any) => s.id);
-      let todaySalesRevenue = 0;
-      let todayUnitsSold = 0;
-      if (todaySaleIds.length > 0) {
-        const { data: saleItems } = await supabase.from('warehouse_sale_items').select('price, quantity').in('sale_id', todaySaleIds);
-        todaySalesRevenue = (saleItems || []).reduce((acc: number, item: any) => acc + ((item.price || 0) * (item.quantity || 1)), 0);
-        todayUnitsSold = (saleItems || []).reduce((acc: number, item: any) => acc + (item.quantity || 0), 0);
-      }
+      const summarizeSales = async (saleIds: string[]) => {
+        let revenue = 0;
+        let units = 0;
 
-      // Week's sales
-      const weekSaleIds = (weekSalesRes.data || []).map((s: any) => s.id);
-      let weekSalesRevenue = 0;
-      let weekUnitsSold = 0;
-      if (weekSaleIds.length > 0) {
-        const { data: saleItems } = await supabase.from('warehouse_sale_items').select('price, quantity').in('sale_id', weekSaleIds);
-        weekSalesRevenue = (saleItems || []).reduce((acc: number, item: any) => acc + ((item.price || 0) * (item.quantity || 1)), 0);
-        weekUnitsSold = (saleItems || []).reduce((acc: number, item: any) => acc + (item.quantity || 0), 0);
-      }
+        if (saleIds.length > 0) {
+          const { data: saleItems } = await supabase
+            .from('warehouse_sale_items')
+            .select('price, quantity')
+            .in('sale_id', saleIds);
 
-      // Month's sales
-      const monthSaleIds = (monthSalesRes.data || []).map((s: any) => s.id);
-      let monthSalesRevenue = 0;
-      let monthUnitsSold = 0;
-      if (monthSaleIds.length > 0) {
-        const { data: saleItems } = await supabase.from('warehouse_sale_items').select('price, quantity').in('sale_id', monthSaleIds);
-        monthSalesRevenue = (saleItems || []).reduce((acc: number, item: any) => acc + ((item.price || 0) * (item.quantity || 1)), 0);
-        monthUnitsSold = (saleItems || []).reduce((acc: number, item: any) => acc + (item.quantity || 0), 0);
-      }
+          const revenueItems = (saleItems || []) as SaleRevenueItemRow[];
+          revenue = revenueItems.reduce((sum, item) => sum + ((item.price || 0) * (item.quantity || 1)), 0);
+          units = revenueItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
+        }
 
-      const scrapEntries = (scrapRes.data || []) as any[];
-      const scrapInEntries = scrapEntries.filter(e => e.status === 'IN');
-      const scrapInCount = scrapInEntries.reduce((acc: number, e: any) => acc + (e.quantity || 1), 0);
-      const scrapInValue = scrapInEntries.reduce((acc: number, e: any) => acc + (e.scrap_value || 0), 0);
+        return { revenue, units };
+      };
 
-      const todayStockIn = (todayStockInRes.data || []).reduce((acc: number, t: any) => acc + (t.quantity || 0), 0);
-      const todayStockOut = (todayStockOutRes.data || []).reduce((acc: number, t: any) => acc + (t.quantity || 0), 0);
+      const todaySales = await summarizeSales(((todaySalesRes.data || []) as SaleSummaryRow[]).map((sale) => sale.id));
+      const weekSales = await summarizeSales(((weekSalesRes.data || []) as SaleSummaryRow[]).map((sale) => sale.id));
+      const monthSales = await summarizeSales(((monthSalesRes.data || []) as SaleSummaryRow[]).map((sale) => sale.id));
+
+      const scrapEntries = (scrapRes.data || []) as ScrapSummaryRow[];
+      const scrapInEntries = scrapEntries.filter((entry) => entry.status === 'IN');
+      const scrapInCount = scrapInEntries.reduce((sum, entry) => sum + (entry.quantity || 1), 0);
+      const scrapInValue = scrapInEntries.reduce((sum, entry) => sum + (entry.scrap_value || 0), 0);
+
+      const todayStockIn = ((todayStockInRes.data || []) as StockQuantityRow[]).reduce((sum, row) => sum + (row.quantity || 0), 0);
+      const todayStockOut = ((todayStockOutRes.data || []) as StockQuantityRow[]).reduce((sum, row) => sum + (row.quantity || 0), 0);
 
       setStats({
         openTickets: openRes.data?.length || openRes.count || 0,
@@ -265,28 +297,71 @@ export default function Dashboard() {
         homeOpenRequests: homeOpenRes.data?.length || homeOpenRes.count || 0,
         homeInProgressRequests: homeInProgressRes.data?.length || homeInProgressRes.count || 0,
         homeClosedToday: homeClosedTodayRes.data?.length || homeClosedTodayRes.count || 0,
-        todaySalesCount: todayUnitsSold,
-        todaySalesRevenue,
-        weekSalesCount: weekUnitsSold,
-        weekSalesRevenue,
-        monthSalesCount: monthUnitsSold,
-        monthSalesRevenue,
+        todaySalesCount: todaySales.units,
+        todaySalesRevenue: todaySales.revenue,
+        weekSalesCount: weekSales.units,
+        weekSalesRevenue: weekSales.revenue,
+        monthSalesCount: monthSales.units,
+        monthSalesRevenue: monthSales.revenue,
         scrapInCount,
         scrapInValue,
         todayStockIn,
         todayStockOut,
-        salesHistory: (todaySalesRes.data || []).map((s: any, i: number) => ({ name: `Sale ${i + 1}`, value: ((s.items || []).reduce((acc: number, val: any) => acc + (val.price * val.quantity), 0)) || Math.floor(Math.random() * (2000 - 500) + 500) })),
         categoryStock,
       });
 
       setRecentTickets((ticketsRes.data as ServiceTicket[]) || []);
-      setLowStockItems(lowStock as WarehouseStock[]);
+      setLowStockItems(lowStock);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchDashboardData();
+
+    const ticketChannel = supabase
+      .channel('dashboard-tickets')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_tickets' }, () => {
+        fetchDashboardData();
+      })
+      .subscribe();
+
+    const homeServiceChannel = supabase
+      .channel('dashboard-home-service')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'home_service_requests' }, () => {
+        fetchDashboardData();
+      })
+      .subscribe();
+
+    const stockChannel = supabase
+      .channel('dashboard-stock')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'warehouse_stock' }, () => {
+        fetchDashboardData();
+      })
+      .subscribe();
+
+    const saleChannel = supabase
+      .channel('dashboard-sales')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'warehouse_sales' }, () => {
+        fetchDashboardData();
+        fetchSalesTrend(salesRangeRef.current);
+      })
+      .subscribe();
+
+    return () => {
+      ticketChannel.unsubscribe();
+      homeServiceChannel.unsubscribe();
+      stockChannel.unsubscribe();
+      saleChannel.unsubscribe();
+    };
+  }, [fetchDashboardData, fetchSalesTrend]);
+
+  useEffect(() => {
+    fetchSalesTrend(salesRange);
+  }, [fetchSalesTrend, salesRange]);
 
   // Fallback polling (helps when realtime is delayed or client missed an event)
   usePollingRefresh(fetchDashboardData, 30000);
@@ -318,7 +393,7 @@ export default function Dashboard() {
     downloadCSV(data, `dashboard-report-${new Date().toISOString().split('T')[0]}`);
   };
 
-  const salesHasValues = salesTrend.some((entry: any) => entry.Units > 0);
+  const salesHasValues = salesTrend.some((entry) => entry.Units > 0);
 
   const ticketSplitData = [
     { name: 'OPEN', in_shop: stats.openTickets, home: stats.homeOpenRequests },
@@ -331,14 +406,14 @@ export default function Dashboard() {
     { name: 'Sale', value: stats.todaySalesCount }
   ];
 
-  const CustomTooltip = ({ active, payload }: any) => {
+  const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: TooltipPayloadRow[] }) => {
     if (active && payload && payload.length) {
       return (
         <div className="bg-slate-50 dark:bg-[#0B0F19]/90 border border-slate-200 dark:border-white/10 p-3 rounded-lg shadow-xl backdrop-blur-md">
           <p className="text-slate-900 dark:text-white text-xs font-bold">{payload[0].payload?.name}</p>
-          {payload.map((p: any) => (
-            <p key={p.dataKey} className="text-sm font-bold mt-1" style={{ color: p.color }}>
-              {p.name}: {p.value}
+          {payload.map((item) => (
+            <p key={item.dataKey} className="text-sm font-bold mt-1" style={{ color: item.color }}>
+              {item.name}: {item.value}
             </p>
           ))}
         </div>
@@ -396,7 +471,7 @@ export default function Dashboard() {
             icon={TrendingUp}
             variant="success"
             trend={stats.todaySalesCount > 0 ? "up" : "neutral"}
-            trendValue={`₹${stats.todaySalesRevenue.toLocaleString('en-IN')}`}
+            trendValue={`Rs. ${stats.todaySalesRevenue.toLocaleString('en-IN')}`}
           />
           <StatsCard
             title="Sales This Week"
@@ -404,7 +479,7 @@ export default function Dashboard() {
             icon={TrendingUp}
             variant="success"
             trend={stats.weekSalesCount > 0 ? "up" : "neutral"}
-            trendValue={`₹${stats.weekSalesRevenue.toLocaleString('en-IN')}`}
+            trendValue={`Rs. ${stats.weekSalesRevenue.toLocaleString('en-IN')}`}
           />
           <StatsCard
             title="Sales This Month"
@@ -412,7 +487,7 @@ export default function Dashboard() {
             icon={TrendingUp}
             variant="success"
             trend={stats.monthSalesCount > 0 ? "up" : "neutral"}
-            trendValue={`₹${stats.monthSalesRevenue.toLocaleString('en-IN')}`}
+            trendValue={`Rs. ${stats.monthSalesRevenue.toLocaleString('en-IN')}`}
           />
           <StatsCard
             title="Scrap In Stock"
@@ -575,7 +650,7 @@ export default function Dashboard() {
           <div className="glass-card rounded-2xl p-6 bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 shadow-md flex flex-col min-h-[320px] hover:-translate-y-1 hover:shadow-xl hover:border-[#4F8CFF]/50 transition-all duration-150 ease-out group gpu-smooth">
             <div className="w-full mb-6">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-wide">Stock Movement</h3>
-              <p className="text-xs text-slate-600 dark:text-slate-500 dark:text-slate-400">Total units moved today</p>
+              <p className="text-xs text-slate-600 dark:text-slate-400">Total units moved today</p>
             </div>
             <div className="w-full h-[200px]">
               <ResponsiveContainer width="100%" height="100%">

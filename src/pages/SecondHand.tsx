@@ -35,6 +35,16 @@ import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { format, differenceInDays, isPast } from 'date-fns';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
+interface BulkUploadRow {
+  'Product ID'?: string | number;
+  'Product Name'?: string | number;
+  'Model'?: string | number;
+  'Category'?: string | number;
+  'Capacity'?: string | number;
+  'Current Quantity'?: string | number;
+  'New Quantity'?: string | number;
+}
+
 export default function SecondHand() {
   const { user, hasRole, hasAnyRole } = useAuth();
   const { toast } = useToast();
@@ -398,7 +408,7 @@ export default function SecondHand() {
       await new Promise(resolve => setTimeout(resolve, 300));
       fetchData();
       fetchLifecycle();
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Rollback optimistic update on error
       setLifecycleRecords(originalRecords);
       const errorMessage = error instanceof Error ? error.message : 'An error occurred';
@@ -482,7 +492,7 @@ export default function SecondHand() {
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data);
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+      const rows = XLSX.utils.sheet_to_json<BulkUploadRow>(ws);
 
       let updated = 0;
       let created = 0;
@@ -509,7 +519,7 @@ export default function SecondHand() {
         }
 
         // Create new SH product
-        if (!productId && productName && model && category && SECOND_HAND_CATEGORIES.includes(category as any)) {
+        if (!productId && productName && model && category && isSecondHandCategory(category)) {
           const qty = !isNaN(newQty) && newQty >= 0 ? parseInt(String(newQty), 10) : 0;
 
           const { data: newProduct, error: productError } = await supabase
@@ -738,7 +748,25 @@ export default function SecondHand() {
     );
   };
 
-  if (!canManage) return <div className="flex items-center justify-center h-64 text-destructive">No access to Second Hand Inventory</div>;
+  if (!canManage) {
+    return (
+      <AppLayout>
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <Card className="w-full max-w-lg rounded-2xl border-slate-200 dark:border-white/10 shadow-sm">
+            <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
+              <Info className="h-10 w-10 text-amber-500" />
+              <div className="space-y-1">
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Second Hand access required</h2>
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Your account does not currently have permission to manage second-hand inventory.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>
@@ -827,7 +855,10 @@ export default function SecondHand() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2 md:col-span-2">
                       <Label>Transaction Type</Label>
-                      <Select value={transactionType} onValueChange={(v: any) => setTransactionType(v)}>
+                      <Select
+                        value={transactionType}
+                        onValueChange={(value) => setTransactionType(value as SecondHandTransactionType)}
+                      >
                         <SelectTrigger>
                           <SelectValue placeholder="Select type" />
                         </SelectTrigger>
@@ -901,7 +932,15 @@ export default function SecondHand() {
                     {transactionType === 'SALE' && (
                       <div className="space-y-2">
                         <Label>Payment Method</Label>
-                        <Select value={transactionForm.payment_method} onValueChange={(v) => setTransactionForm({ ...transactionForm, payment_method: v as any })}>
+                        <Select
+                          value={transactionForm.payment_method}
+                          onValueChange={(value) =>
+                            setTransactionForm({
+                              ...transactionForm,
+                              payment_method: value as 'CASH' | 'CARD' | 'UPI',
+                            })
+                          }
+                        >
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="CASH">Cash</SelectItem>
@@ -1222,8 +1261,6 @@ export default function SecondHand() {
           </Card>
         )}
 
-        {/* Hidden bulk upload input */}
-        <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleBulkUpload} className="hidden" />
         {/* Delete Product Confirmation Dialog */}
         <AlertDialog open={!!productToDelete} onOpenChange={() => setProductToDelete(null)}>
           <AlertDialogContent>

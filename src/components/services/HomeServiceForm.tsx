@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Product } from '@/types/database';
+import { Product, Profile } from '@/types/database';
 
 interface HomeServiceFormProps {
   onRequestCreated: () => void;
@@ -20,7 +20,6 @@ interface HomeServiceFormProps {
 type HomeServiceItem = {
   item_type: 'BATTERY' | 'INVERTER';
   model: string;
-  issue_description: string;
   quantity: number;
 };
 
@@ -67,7 +66,6 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
     setServiceItems([...serviceItems, { 
       item_type: type, 
       model: '', 
-      issue_description: '', 
       quantity: 1,
     }]);
   };
@@ -100,19 +98,58 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
     setLoading(true);
 
     try {
-      // Get service technician
       let assignedTechnicianId: string | null = null;
-      try {
-        const { data: technicianData } = await supabase
-          .from('user_roles')
-          .select('user_id')
-          .eq('role', 'service_technician')
-          .limit(1);
+      let assignedTechnicianName: string | null = null;
 
-        if (technicianData && technicianData.length > 0) {
-          assignedTechnicianId = technicianData[0].user_id;
-        }
-      } catch {}
+      const { data: technicianRoleRows, error: technicianRoleError } = await supabase
+        .from('user_roles')
+        .select('user_id')
+        .eq('role', 'service_technician');
+
+      if (technicianRoleError) throw technicianRoleError;
+
+      const technicianIds = (technicianRoleRows || []).map((row: { user_id: string }) => row.user_id);
+
+      if (technicianIds.length > 0) {
+        const [{ data: technicianProfiles, error: technicianProfilesError }, { data: activeAssignments, error: activeAssignmentsError }] = await Promise.all([
+          supabase
+            .from('profiles')
+            .select('user_id, name')
+            .in('user_id', technicianIds),
+          supabase
+            .from('home_service_requests')
+            .select('assigned_to, status')
+            .in('assigned_to', technicianIds)
+            .in('status', ['OPEN', 'IN_PROGRESS']),
+        ]);
+
+        if (technicianProfilesError) throw technicianProfilesError;
+        if (activeAssignmentsError) throw activeAssignmentsError;
+
+        const workloadByTechnician = technicianIds.reduce((acc, technicianId) => {
+          acc[technicianId] = 0;
+          return acc;
+        }, {} as Record<string, number>);
+
+        (activeAssignments || []).forEach((request: { assigned_to: string | null }) => {
+          if (request.assigned_to && request.assigned_to in workloadByTechnician) {
+            workloadByTechnician[request.assigned_to] += 1;
+          }
+        });
+
+        const nextTechnician = ((technicianProfiles || []) as Array<Pick<Profile, 'user_id' | 'name'>>)
+          .sort((left, right) => {
+            const workloadDelta = workloadByTechnician[left.user_id] - workloadByTechnician[right.user_id];
+            if (workloadDelta !== 0) {
+              return workloadDelta;
+            }
+
+            return left.name.localeCompare(right.name);
+          })[0];
+
+        assignedTechnicianId = nextTechnician?.user_id ?? null;
+        assignedTechnicianName = nextTechnician?.name ?? null;
+      }
 
       // Create request
       const { data: requestData, error: requestError } = await supabase
@@ -144,14 +181,16 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
             request_id: requestData.id,
             item_type: item.item_type,
             model: item.model,
-            issue_description: item.issue_description || null,
+            issue_description: formData.issue_description,
           });
         }
       }
 
       toast({
         title: 'Home Service Request Created',
-        description: `Request #${requestData.request_number} created with ${serviceItems.length} item(s).`,
+        description: assignedTechnicianName
+          ? `Request #${requestData.request_number} created and auto-assigned to ${assignedTechnicianName}.`
+          : `Request #${requestData.request_number} created with ${serviceItems.length} item(s).`,
       });
 
       setFormData({ ...initialFormData });
@@ -262,26 +301,15 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
                       placeholder={`Search ${item.item_type.toLowerCase()} model...`}
                     />
                     
-                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                      <div>
-                        <Label className="text-xs text-muted-foreground block mb-1">Qty</Label>
-                        <Input
-                          type="number"
-                          min="1"
-                          value={item.quantity}
-                          onChange={(e) => updateItem(index, 'quantity', parseInt(e.target.value) || 1)}
-                          className="h-8 text-center text-sm"
-                        />
-                      </div>
-                      <div className="col-span-2 sm:col-span-3">
-                        <Label className="text-xs text-muted-foreground block mb-1">Issue</Label>
-                        <Input
-                          placeholder="Describe issue..."
-                          value={item.issue_description}
-                          onChange={(e) => updateItem(index, 'issue_description', e.target.value)}
-                          className="h-8 text-sm"
-                        />
-                      </div>
+                    <div className="max-w-[140px]">
+                      <Label className="mb-1 block text-xs text-muted-foreground">Qty</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        value={item.quantity}
+                        onChange={(e) => updateItem(index, 'quantity', parseInt(e.target.value) || 1)}
+                        className="h-8 text-center text-sm"
+                      />
                     </div>
                   </div>
                 ))}
@@ -300,7 +328,7 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
               id="issue_description"
               value={formData.issue_description}
               onChange={(e) => setFormData({ ...formData, issue_description: e.target.value })}
-              placeholder="Additional notes about the service..."
+              placeholder="Describe the main issue for this home service request. This will apply to all added items."
               rows={2}
               required
               className="resize-none"

@@ -2,16 +2,16 @@ import { useEffect, useState } from 'react';
 import { ArrowUpCircle, ArrowDownCircle, Search, RefreshCw, ShoppingCart, Package, Trash2 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
-import { StockTransaction, Profile } from '@/types/database';
+import { StockTransaction, Profile, Product } from '@/types/database';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePollingRefresh } from '@/hooks/usePollingRefresh';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,8 +56,20 @@ interface SaleRecord {
   payment_method: string;
   total_amount: number;
   sold_by: string;
-  items: any[];
+  items: SaleItemRecord[];
 }
+
+interface SaleItemRecord {
+  id: string;
+  product_id: string;
+  model_number: string;
+  quantity: number;
+  price: number;
+  product?: Product | null;
+}
+
+type StockTypeFilter = 'ALL' | 'IN' | 'OUT';
+type DateRangeFilter = 'ALL' | 'TODAY' | '7D' | '30D' | '90D';
 
 export default function Transactions() {
   const { hasRole } = useAuth();
@@ -68,6 +80,8 @@ export default function Transactions() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [stockTypeFilter, setStockTypeFilter] = useState<StockTypeFilter>('ALL');
+  const [dateRange, setDateRange] = useState<DateRangeFilter>('30D');
   const [refreshing, setRefreshing] = useState(false);
   const [deletingSaleId, setDeletingSaleId] = useState<string | null>(null);
   const [saleToDelete, setSaleToDelete] = useState<SaleRecord | null>(null);
@@ -76,35 +90,25 @@ export default function Transactions() {
 
   const isAdmin = hasRole('admin');
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
   const fetchData = async () => {
     try {
       const [transRes, salesRes, scrapRes, profilesRes] = await Promise.all([
         supabase
           .from('stock_transactions')
           .select('*, product:products(*)')
-          .eq('transaction_type', 'IN') // Only fetch IN transactions
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         supabase
           .from('warehouse_sales')
           .select('*, items:warehouse_sale_items(*, product:products(*))')
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         supabase
           .from('scrap_entries')
           .select('*')
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         supabase.from('profiles').select('*'),
       ]);
 
-      // Filter transactions to only show IN (already filtered at query level, but double check)
-      const inTransactions = (transRes.data as StockTransaction[])?.filter(t => t.transaction_type === 'IN') || [];
-      setTransactions(inTransactions);
+      setTransactions((transRes.data as StockTransaction[]) || []);
       setSales((salesRes.data as SaleRecord[]) || []);
       setScrapEntries((scrapRes.data as ScrapEntry[]) || []);
       setProfiles((profilesRes.data as Profile[]) || []);
@@ -114,6 +118,32 @@ export default function Transactions() {
       setLoading(false);
       setRefreshing(false);
     }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  usePollingRefresh(fetchData, 30000);
+
+  const isWithinSelectedRange = (dateValue: string) => {
+    if (dateRange === 'ALL') return true;
+
+    const entryDate = new Date(dateValue);
+    const now = new Date();
+    const rangeStart = new Date(now);
+
+    if (dateRange === 'TODAY') {
+      rangeStart.setHours(0, 0, 0, 0);
+    } else if (dateRange === '7D') {
+      rangeStart.setDate(now.getDate() - 7);
+    } else if (dateRange === '30D') {
+      rangeStart.setDate(now.getDate() - 30);
+    } else if (dateRange === '90D') {
+      rangeStart.setDate(now.getDate() - 90);
+    }
+
+    return entryDate >= rangeStart;
   };
 
   const handleRefresh = async () => {
@@ -127,8 +157,16 @@ export default function Transactions() {
   };
 
   const filteredTransactions = transactions
-    .filter((trans, index, arr) => arr.findIndex(t => t.id === trans.id) === index) // Remove duplicates by ID
+    .filter((trans, index, arr) => arr.findIndex(t => t.id === trans.id) === index)
     .filter(trans => {
+      if (stockTypeFilter !== 'ALL' && trans.transaction_type !== stockTypeFilter) {
+        return false;
+      }
+
+      if (!isWithinSelectedRange(trans.created_at)) {
+        return false;
+      }
+
       const searchLower = search.trim().toLowerCase();
       if (!searchLower) return true;
 
@@ -142,6 +180,26 @@ export default function Transactions() {
       const searchTerms = searchLower.split(/\s+/);
       return searchTerms.every(term => combinedName.includes(term));
     });
+
+  const filteredSales = sales.filter((sale) => {
+    if (!isWithinSelectedRange(sale.created_at)) {
+      return false;
+    }
+
+    const searchLower = search.trim().toLowerCase();
+    if (!searchLower) return true;
+
+    const customerName = sale.customer_name?.toLowerCase() || 'walking customer';
+    const paymentMethod = sale.payment_method?.toLowerCase() || '';
+    const itemSummary = (sale.items || [])
+      .map((item) => `${item.product?.name || ''} ${item.product?.model || ''} ${item.model_number || ''}`)
+      .join(' ')
+      .toLowerCase();
+
+    const combined = `${customerName} ${paymentMethod} ${itemSummary}`;
+    const searchTerms = searchLower.split(/\s+/);
+    return searchTerms.every((term) => combined.includes(term));
+  });
 
   // Build dual IN/OUT rows for scrap transactions
   const scrapTransactionRows: ScrapTransactionRow[] = [];
@@ -177,6 +235,10 @@ export default function Transactions() {
   scrapTransactionRows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const filteredScrapRows = scrapTransactionRows.filter(row => {
+    if (!isWithinSelectedRange(row.date)) {
+      return false;
+    }
+
     const searchLower = search.trim().toLowerCase();
     if (!searchLower) return true;
 
@@ -262,10 +324,7 @@ export default function Transactions() {
           .eq('product_id', item.product_id)
           .single();
 
-        if (stockError) {
-          console.error('Error fetching stock:', stockError);
-          continue;
-        }
+        if (stockError) throw stockError;
 
         // Calculate new quantity (add back the sold quantity)
         const newQuantity = (currentStock?.quantity || 0) + item.quantity;
@@ -276,9 +335,7 @@ export default function Transactions() {
           .update({ quantity: newQuantity })
           .eq('product_id', item.product_id);
 
-        if (updateError) {
-          console.error('Error restoring stock:', updateError);
-        }
+        if (updateError) throw updateError;
       }
 
       // Delete sale items first (due to foreign key)
@@ -313,10 +370,10 @@ export default function Transactions() {
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Transactions</h1>
-          <p className="text-muted-foreground">View all stock and scrap transaction history</p>
+          <p className="text-muted-foreground">View stock movement, sales, and scrap history with live refresh and filters.</p>
         </div>
 
-        <div className="flex gap-3 items-center">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -326,16 +383,42 @@ export default function Transactions() {
               className="pl-10 max-w-md"
             />
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="gap-2"
-          >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? 'Refreshing...' : 'Refresh'}
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Select value={stockTypeFilter} onValueChange={(value) => setStockTypeFilter(value as StockTypeFilter)}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Stock movement" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All stock movement</SelectItem>
+                <SelectItem value="IN">Stock in only</SelectItem>
+                <SelectItem value="OUT">Stock out only</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={dateRange} onValueChange={(value) => setDateRange(value as DateRangeFilter)}>
+              <SelectTrigger className="w-[160px]">
+                <SelectValue placeholder="Date range" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="TODAY">Today</SelectItem>
+                <SelectItem value="7D">Last 7 days</SelectItem>
+                <SelectItem value="30D">Last 30 days</SelectItem>
+                <SelectItem value="90D">Last 90 days</SelectItem>
+                <SelectItem value="ALL">All dates</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          </div>
         </div>
 
         {loading ? (
@@ -345,8 +428,8 @@ export default function Transactions() {
         ) : (
           <Tabs defaultValue="stock" className="w-full">
             <TabsList className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-white/5 p-1 rounded-xl w-fit mb-4">
-              <TabsTrigger value="stock" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-[#4F8CFF] data-[state=active]:shadow-sm">Stock In ({filteredTransactions.length})</TabsTrigger>
-              <TabsTrigger value="sales" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-emerald-500 data-[state=active]:shadow-sm">Sales ({sales.length})</TabsTrigger>
+              <TabsTrigger value="stock" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-[#4F8CFF] data-[state=active]:shadow-sm">Stock Movement ({filteredTransactions.length})</TabsTrigger>
+              <TabsTrigger value="sales" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-emerald-500 data-[state=active]:shadow-sm">Sales ({filteredSales.length})</TabsTrigger>
               <TabsTrigger value="scrap" className="rounded-lg data-[state=active]:bg-slate-100 dark:bg-[#1B2438] data-[state=active]:text-[#4F8CFF] data-[state=active]:shadow-sm">Scrap ({filteredScrapRows.length})</TabsTrigger>
             </TabsList>
 
@@ -413,11 +496,11 @@ export default function Transactions() {
 
             <TabsContent value="sales" className="mt-4">
               <div className="space-y-6 relative before:absolute before:left-[70px] sm:before:left-[110px] before:top-2 before:bottom-2 before:w-px before:bg-white/10 ml-0 sm:ml-4 animate-in fade-in duration-500 pb-12">
-                {sales.length === 0 ? (
+                {filteredSales.length === 0 ? (
                   <div className="text-center text-slate-600 dark:text-slate-500 py-12 font-medium">No sales found</div>
                 ) : (
-                  sales.map((sale) => {
-                    const totalQty = sale.items?.reduce((acc: number, cur: any) => acc + (cur.quantity || 0), 0) || 0;
+                  filteredSales.map((sale) => {
+                    const totalQty = sale.items?.reduce((acc, cur) => acc + (cur.quantity || 0), 0) || 0;
                     
                     return (
                       <div key={sale.id} className="relative flex gap-4 sm:gap-8 items-start group overflow-hidden sm:overflow-visible p-1 sm:p-0">
@@ -438,7 +521,7 @@ export default function Transactions() {
                               </div>
 {sale.items && sale.items.length > 0 && (
                                 <div className="text-[11px] text-muted-foreground flex flex-wrap gap-1">
-                                  {sale.items.map((item: any, idx: number) => (
+                                  {sale.items.map((item, idx) => (
                                     <span key={idx} className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
                                       {item.quantity}x {item.product?.model || item.model_number}
                                     </span>
@@ -452,7 +535,7 @@ export default function Transactions() {
                                   -{totalQty}
                                 </div>
                                 <div className="text-sm font-bold text-emerald-500">
-                                  ₹{sale.total_amount?.toLocaleString('en-IN')}
+                                  Rs. {sale.total_amount?.toLocaleString('en-IN')}
                                 </div>
                                 <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold max-w-[120px] sm:max-w-none truncate" title={`By ${getProfileName(sale.sold_by)}`}>By {getProfileName(sale.sold_by)}</p>
                               </div>
@@ -513,7 +596,7 @@ export default function Transactions() {
                             <div className="flex items-center gap-8 border-t sm:border-t-0 sm:border-l border-slate-200 dark:border-white/10 pt-4 sm:pt-0 sm:pl-6 mt-2 sm:mt-0">
                               <div className="text-right">
                                 <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold mb-1">Value</p>
-                                <div className="text-lg font-bold text-emerald-400 drop-shadow-md tracking-tight">₹{row.scrap_value.toLocaleString('en-IN')}</div>
+                                <div className="text-lg font-bold text-emerald-400 drop-shadow-md tracking-tight">Rs. {row.scrap_value.toLocaleString('en-IN')}</div>
                               </div>
                               <div className="text-right">
                                 <p className="text-[10px] text-slate-600 dark:text-slate-500 uppercase tracking-widest font-bold mb-1">Qty</p>
@@ -546,7 +629,7 @@ export default function Transactions() {
               {saleToDelete && (
                 <div className="mt-2 p-2 bg-muted rounded-md text-sm">
                   <p><strong>Customer:</strong> {saleToDelete.customer_name || 'Walking Customer'}</p>
-                  <p><strong>Amount:</strong> ₹{saleToDelete.total_amount?.toLocaleString('en-IN')}</p>
+                  <p><strong>Amount:</strong> Rs. {saleToDelete.total_amount?.toLocaleString('en-IN')}</p>
                   <p><strong>Items:</strong> {saleToDelete.items?.length || 0} product(s)</p>
                 </div>
               )}

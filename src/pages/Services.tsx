@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { supabase } from '@/integrations/supabase/client';
-import { ServiceTicket, ServiceStatus, Profile, UserRole, HomeServiceRequest } from '@/types/database';
+import { ServiceTicket, ServiceStatus, Profile, UserRole, HomeServiceRequest, ServiceTicketItem } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { usePollingRefresh } from '@/hooks/usePollingRefresh';
@@ -354,6 +354,8 @@ function HomeServiceCounterStaffView({ homeSearch, externalRefreshTrigger = 0 }:
   );
 }
 
+type ServiceTicketItemInsert = Pick<ServiceTicketItem, 'ticket_id' | 'item_type' | 'model' | 'issue_description' | 'product_id'>;
+
 type HomeServiceTechnicianViewProps = {
   homeSearch: string;
   onRefresh: () => void;
@@ -534,6 +536,13 @@ export default function Services() {
   const [showNewTicketPrint, setShowNewTicketPrint] = useState<ServiceTicket | null>(null);
   const [showClosedPrint, setShowClosedPrint] = useState<ServiceTicket | null>(null);
 
+  const getTicketItems = (ticket?: ServiceTicket | null): ServiceTicketItem[] => ticket?.items || [];
+  const getBatteryItems = (ticket?: ServiceTicket | null) => getTicketItems(ticket).filter((item) => item.item_type === 'BATTERY');
+  const getInverterItems = (ticket?: ServiceTicket | null) => getTicketItems(ticket).filter((item) => item.item_type === 'INVERTER');
+  const getResolvedItemCount = (ticket?: ServiceTicket | null) => getTicketItems(ticket).filter((item) => item.resolved).length;
+  const getTicketItemsTotal = (ticket?: ServiceTicket | null) => getTicketItems(ticket).reduce((sum, item) => sum + (item.price || 0), 0);
+  const formatCurrency = (amount: number) => `Rs. ${amount.toLocaleString('en-IN')}`;
+
   useEffect(() => {
     fetchTickets();
     fetchProfiles();
@@ -595,9 +604,9 @@ export default function Services() {
 
       if (error) throw error;
 
-      // Fetch items for all tickets
-      const ticketIds = (data || []).map((t: any) => t.id);
-      let itemsMap: Record<string, any[]> = {};
+      const ticketsData = (data || []) as ServiceTicket[];
+      const ticketIds = ticketsData.map((ticket) => ticket.id);
+      const itemsMap: Record<string, ServiceTicketItem[]> = {};
 
       if (ticketIds.length > 0) {
         const { data: items } = await supabase
@@ -605,14 +614,13 @@ export default function Services() {
           .select('*')
           .in('ticket_id', ticketIds);
 
-        (items || []).forEach((item: any) => {
+        ((items || []) as ServiceTicketItem[]).forEach((item) => {
           if (!itemsMap[item.ticket_id]) itemsMap[item.ticket_id] = [];
           itemsMap[item.ticket_id].push(item);
         });
       }
 
-      // Merge items with tickets
-      const ticketsWithItems = (data || []).map((ticket: any) => ({
+      const ticketsWithItems = ticketsData.map((ticket) => ({
         ...ticket,
         items: itemsMap[ticket.id] || []
       }));
@@ -719,7 +727,7 @@ export default function Services() {
       // Insert items into service_ticket_items
       if (hasItems && ticket) {
         // Expand items by quantity
-        const itemsToInsert: any[] = [];
+        const itemsToInsert: ServiceTicketItemInsert[] = [];
         ticketItems.forEach(item => {
           const qty = Math.max(1, Number(item.quantity) || 1);
           for (let i = 0; i < qty; i++) {
@@ -851,20 +859,20 @@ export default function Services() {
     e.preventDefault();
     if (!ticketToResolveBattery || !user) return;
 
-    const batteryItems = ticketToResolveBattery.items?.filter((i: any) => i.item_type === 'BATTERY') || [];
+    const batteryItems = getBatteryItems(ticketToResolveBattery);
     if (batteryItems.length === 0) {
       toast({ title: 'No batteries to resolve', variant: 'destructive' });
       return;
     }
 
     // Validate: each item must have warranty and price (if not warranty)
-    const hasAllWarranty = batteryItems.every((item: any) => batteryItemWarranty[item.id]);
+    const hasAllWarranty = batteryItems.every((item) => batteryItemWarranty[item.id]);
     if (!hasAllWarranty) {
       toast({ title: 'Please select warranty status for all batteries', variant: 'destructive' });
       return;
     }
 
-    const hasValidPrices = batteryItems.every((item: any) => {
+    const hasValidPrices = batteryItems.every((item) => {
       const isWarranty = batteryItemWarranty[item.id] === 'yes';
       if (isWarranty) return true; // No price needed for warranty
       const price = batteryItemPrices[item.id];
@@ -894,7 +902,7 @@ export default function Services() {
       }
 
       // Calculate total battery price from items
-      const totalBatteryPrice = batteryItems.reduce((sum: number, item: any) => {
+      const totalBatteryPrice = batteryItems.reduce((sum, item) => {
         const isWarranty = batteryItemWarranty[item.id] === 'yes';
         return sum + (isWarranty ? 0 : Number(batteryItemPrices[item.id] || 0));
       }, 0);
@@ -902,10 +910,10 @@ export default function Services() {
       // Check if all items (including inverters) are resolved
       const allItems = await supabase
         .from('service_ticket_items')
-        .select('*')
+        .select('resolved')
         .eq('ticket_id', ticketToResolveBattery.id);
       
-      const allResolved = allItems.data?.every((i: any) => i.resolved) ?? false;
+      const allResolved = ((allItems.data || []) as Array<Pick<ServiceTicketItem, 'resolved'>>).every((item) => item.resolved);
 
       const updateData: Record<string, unknown> = {
         battery_resolved: true,
@@ -926,7 +934,7 @@ export default function Services() {
 
       await supabase.from('service_logs').insert({
         ticket_id: ticketToResolveBattery.id,
-        action: `Battery resolved (${batteryItems.length} items) - Total: ₹${totalBatteryPrice}`,
+        action: `Battery resolved (${batteryItems.length} items) - Total: ${formatCurrency(totalBatteryPrice)}`,
         user_id: user.id,
       });
 
@@ -947,21 +955,21 @@ export default function Services() {
     e.preventDefault();
     if (!ticketToResolveInvertor || !user) return;
 
-    const inverterItems = ticketToResolveInvertor.items?.filter((i: any) => i.item_type === 'INVERTER') || [];
+    const inverterItems = getInverterItems(ticketToResolveInvertor);
     if (inverterItems.length === 0) {
       toast({ title: 'No inverters to resolve', variant: 'destructive' });
       return;
     }
 
     // Validate: each item must have resolution status
-    const hasAllResolution = inverterItems.every((item: any) => inverterItemResolved[item.id]);
+    const hasAllResolution = inverterItems.every((item) => inverterItemResolved[item.id]);
     if (!hasAllResolution) {
       toast({ title: 'Please select resolution status for all inverters', variant: 'destructive' });
       return;
     }
 
     // Validate: if resolved = yes, must have price; if no, price can be 0
-    const hasValidPrices = inverterItems.every((item: any) => {
+    const hasValidPrices = inverterItems.every((item) => {
       const isResolved = inverterItemResolved[item.id] === 'yes';
       if (!isResolved) return true; // Not resolved = no price needed
       const price = inverterItemPrices[item.id];
@@ -991,7 +999,7 @@ export default function Services() {
       }
 
       // Calculate total inverter price from items
-      const totalInverterPrice = inverterItems.reduce((sum: number, item: any) => {
+      const totalInverterPrice = inverterItems.reduce((sum, item) => {
         const isResolved = inverterItemResolved[item.id] === 'yes';
         return sum + (isResolved ? Number(inverterItemPrices[item.id] || 0) : 0);
       }, 0);
@@ -999,10 +1007,10 @@ export default function Services() {
       // Check if all items are resolved
       const allItems = await supabase
         .from('service_ticket_items')
-        .select('*')
+        .select('resolved')
         .eq('ticket_id', ticketToResolveInvertor.id);
       
-      const allResolved = allItems.data?.every((i: any) => i.resolved) ?? false;
+      const allResolved = ((allItems.data || []) as Array<Pick<ServiceTicketItem, 'resolved'>>).every((item) => item.resolved);
 
       const updateData: Record<string, unknown> = {
         invertor_resolved: true,
@@ -1024,7 +1032,7 @@ export default function Services() {
 
       await supabase.from('service_logs').insert({
         ticket_id: ticketToResolveInvertor.id,
-        action: `Inverter resolved (${inverterItems.length} items) - Total: ₹${totalInverterPrice}`,
+        action: `Inverter resolved (${inverterItems.length} items) - Total: ${formatCurrency(totalInverterPrice)}`,
         notes: invertorIssueDescription || null,
         user_id: user.id,
       });
@@ -1181,12 +1189,12 @@ export default function Services() {
 
         {/* IN-SHOP SERVICE TAB */}
         {!isServiceTechnician && (
-          <TabsContent value="in-shop" className="space-y-6 relative min-h-[80vh] pb-24">
+          <TabsContent value="in-shop" className="space-y-6 relative min-h-[80vh] pb-32 sm:pb-24">
         {/* Floating New Ticket Button */}
         {canCreateTicket && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button size="lg" className="fixed bottom-8 right-8 z-50 rounded-full h-14 px-6 shadow-[0_8px_32px_rgba(79,140,255,0.35)] bg-gradient-to-r from-[#4F8CFF] to-blue-600 hover:scale-105 hover:shadow-[0_8px_32px_rgba(79,140,255,0.5)] transition-all duration-300">
+              <Button size="lg" className="fixed inset-x-4 bottom-4 z-50 h-12 justify-center rounded-full px-4 shadow-[0_8px_32px_rgba(79,140,255,0.35)] bg-gradient-to-r from-[#4F8CFF] to-blue-600 transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_8px_32px_rgba(79,140,255,0.5)] sm:inset-x-auto sm:bottom-8 sm:right-8 sm:h-14 sm:px-6">
                 <Plus className="h-5 w-5 mr-2" />
                 <span className="font-semibold tracking-wide">New Ticket</span>
               </Button>
@@ -1368,11 +1376,11 @@ export default function Services() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white drop-shadow-md">Service Tickets</h1>
-            <p className="text-slate-600 dark:text-slate-500 dark:text-slate-400 mt-1">Manage and track customer service requests</p>
+            <p className="mt-1 text-slate-600 dark:text-slate-400">Manage and track customer service requests</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={handleExportAll} disabled={filteredTickets.length === 0} className="rounded-xl border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-[#1B2438]/50 hover:bg-slate-100 dark:bg-[#1B2438] text-slate-900 dark:text-white">
-              <Download className="h-4 w-4 mr-2 text-slate-600 dark:text-slate-500 dark:text-slate-400" />
+              <Download className="mr-2 h-4 w-4 text-slate-600 dark:text-slate-400" />
               Export
             </Button>
           </div>
@@ -1393,7 +1401,7 @@ export default function Services() {
           </div>
 
           <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-600 dark:text-slate-500 dark:text-slate-400" />
+            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-600 dark:text-slate-400" />
             <Input
               placeholder="Search by customer, ticket ID, model..."
               value={search}
@@ -1407,14 +1415,14 @@ export default function Services() {
           <div className="flex items-center justify-center py-20">
             <div className="animate-pulse flex flex-col items-center gap-4">
               <div className="h-10 w-10 border-4 border-[#4F8CFF]/30 border-t-[#4F8CFF] rounded-full animate-spin" />
-              <span className="text-slate-600 dark:text-slate-500 dark:text-slate-400 font-medium tracking-wide">Loading tickets...</span>
+              <span className="font-medium tracking-wide text-slate-600 dark:text-slate-400">Loading tickets...</span>
             </div>
           </div>
         ) : filteredTickets.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center glass-card rounded-3xl border border-slate-200 dark:border-white/5 bg-white dark:bg-[#111827]/50">
             <Wrench className="h-12 w-12 text-slate-600 mb-4" />
             <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">No tickets found</h3>
-            <p className="text-slate-600 dark:text-slate-500 dark:text-slate-400 max-w-sm">There are no service tickets matching your criteria right now.</p>
+            <p className="max-w-sm text-slate-600 dark:text-slate-400">There are no service tickets matching your criteria right now.</p>
           </div>
         ) : (
           <div className="grid gap-4 animate-in slide-in-from-bottom-4 duration-500">
@@ -1451,18 +1459,18 @@ export default function Services() {
                           {ticket.status.replace('_', ' ')}
                         </Badge>
                       </div>
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-slate-600 dark:text-slate-500 dark:text-slate-400">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-slate-600 dark:text-slate-400">
                         <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-slate-600 dark:text-slate-500" /> {ticket.customer_phone}</span>
                         
                         {/* Show items if available, otherwise legacy fields */}
                         {ticket.items && ticket.items.length > 0 ? (
-                          ticket.items.slice(0, 3).map((item: any, idx: number) => (
+                          ticket.items.slice(0, 3).map((item, idx) => (
                             <span key={idx} className="flex items-center gap-1.5 truncate max-w-[200px]">
                               {item.item_type === 'BATTERY' ? <Battery className="h-3.5 w-3.5" /> : <Zap className="h-3.5 w-3.5" />}
                               {item.model}
                               {item.within_warranty && <Badge className="text-[9px] px-1 py-0 bg-emerald-500/10 text-emerald-500">W</Badge>}
-                              {item.price > 0 && <span className="text-emerald-500 font-semibold">₹{item.price.toLocaleString('en-IN')}</span>}
-                              {item.resolved && <span className="text-emerald-500">✓</span>}
+                              {item.price && item.price > 0 && <span className="text-emerald-500 font-semibold">{formatCurrency(item.price)}</span>}
+                              {item.resolved && <span className="text-emerald-500">Done</span>}
                             </span>
                           ))
                         ) : (
@@ -1470,16 +1478,16 @@ export default function Services() {
                             <span className="flex items-center gap-1.5 truncate max-w-[200px]">
                               <Battery className="h-3.5 w-3.5 text-slate-600 dark:text-slate-500" /> 
                               {ticket.battery_model || 'N/A'}
-                              {ticket.battery_price > 0 && (
-                                <span className="text-emerald-500 font-semibold">₹{ticket.battery_price.toLocaleString('en-IN')}</span>
+                              {ticket.battery_price && ticket.battery_price > 0 && (
+                                <span className="text-emerald-500 font-semibold">{formatCurrency(ticket.battery_price)}</span>
                               )}
                             </span>
                             {ticket.invertor_model && (
                               <span className="flex items-center gap-1.5 truncate max-w-[200px]">
                                 <Zap className="h-3.5 w-3.5 text-slate-600 dark:text-slate-500" /> 
                                 {ticket.invertor_model}
-                                {ticket.invertor_price > 0 && (
-                                  <span className="text-emerald-500 font-semibold">₹{ticket.invertor_price.toLocaleString('en-IN')}</span>
+                                {ticket.invertor_price && ticket.invertor_price > 0 && (
+                                  <span className="text-emerald-500 font-semibold">{formatCurrency(ticket.invertor_price)}</span>
                                 )}
                               </span>
                             )}
@@ -1489,7 +1497,7 @@ export default function Services() {
                           <span className="text-xs text-slate-500">+{ticket.items.length - 3} more</span>
                         )}
                       </div>
-                      <p className="text-sm text-slate-600 dark:text-slate-500 line-clamp-1 italic group-hover:text-slate-600 dark:text-slate-500 dark:text-slate-400 transition-colors">"{ticket.issue_description}"</p>
+                      <p className="line-clamp-1 text-sm italic text-slate-600 transition-colors group-hover:text-slate-700 dark:text-slate-400 dark:group-hover:text-slate-300">"{ticket.issue_description}"</p>
                     </div>
                   </div>
 
@@ -1499,7 +1507,7 @@ export default function Services() {
                       <Badge variant="outline" className="text-xs">
                         {ticket.items.length} item{ticket.items.length > 1 ? 's' : ''}
                         {' · '}
-                        {ticket.items.filter((i: any) => i.resolved).length}/{ticket.items.length} done
+                        {getResolvedItemCount(ticket)}/{ticket.items.length} done
                       </Badge>
                     )}
 
@@ -1525,12 +1533,12 @@ export default function Services() {
                       </span>
                       {/* Show total from items or legacy fields */}
                       {(() => {
-                        const itemsTotal = ticket.items?.reduce((sum: number, i: any) => sum + (i.price || 0), 0) || 0;
+                        const itemsTotal = getTicketItemsTotal(ticket);
                         const legacyTotal = (ticket.battery_price || 0) + (ticket.invertor_price || 0);
                         const total = itemsTotal > 0 ? itemsTotal : legacyTotal;
                         return total > 0 ? (
                           <span className="font-bold text-emerald-400 tracking-wide drop-shadow-[0_0_8px_rgba(34,197,94,0.3)]">
-                            ₹{total.toLocaleString('en-IN')}
+                            {formatCurrency(total)}
                           </span>
                         ) : null;
                       })()}
@@ -1698,14 +1706,14 @@ export default function Services() {
                         {/* Show all items as a summary */}
                         {selectedTicket.items?.length > 0 && (
                           <div className="flex flex-wrap gap-2 p-3 bg-muted/30 rounded-lg">
-                            {selectedTicket.items.map((item: any, idx: number) => (
+                            {selectedTicket.items.map((item, idx) => (
                               <Badge 
                                 key={idx} 
                                 variant={item.item_type === 'BATTERY' ? 'default' : 'secondary'}
                                 className={item.resolved ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : ''}
                               >
                                 {item.item_type === 'BATTERY' ? <Battery className="h-3 w-3 mr-1" /> : <Zap className="h-3 w-3 mr-1" />}
-                                {item.model} {item.resolved && '✓'}
+                                {item.model} {item.resolved && 'Done'}
                               </Badge>
                             ))}
                           </div>
@@ -1756,7 +1764,7 @@ export default function Services() {
                     {/* Close Ticket - only when all items resolved */}
                     {canCloseTicket && (() => {
                       const allResolved = selectedTicket.items?.length > 0
-                        ? selectedTicket.items.every((i: any) => i.resolved)
+                        ? selectedTicket.items.every((item) => item.resolved)
                         : selectedTicket.battery_resolved !== false && selectedTicket.invertor_resolved !== false;
                       return selectedTicket.status !== 'CLOSED' && allResolved;
                     })() && (
@@ -1790,16 +1798,16 @@ export default function Services() {
               <form onSubmit={handleBatteryResolveSubmit} className="space-y-5">
 
               {/* Show all battery items with individual warranty and price inputs */}
-              {ticketToResolveBattery?.items?.filter((i: any) => i.item_type === 'BATTERY').length > 0 && (
+              {getBatteryItems(ticketToResolveBattery).length > 0 && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <Label className="text-sm font-semibold text-muted-foreground">Resolve each battery:</Label>
                     <Badge variant="outline" className="text-xs">
-                      {ticketToResolveBattery.items.filter((i: any) => i.item_type === 'BATTERY').length} item(s)
+                      {getBatteryItems(ticketToResolveBattery).length} item(s)
                     </Badge>
                   </div>
                   <div className="max-h-[300px] overflow-y-auto space-y-3">
-                    {ticketToResolveBattery.items.filter((i: any) => i.item_type === 'BATTERY').map((item: any, idx: number) => (
+                    {getBatteryItems(ticketToResolveBattery).map((item, idx) => (
                       <div key={item.id || idx} className="p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-100 dark:border-blue-900 space-y-3">
                         <div className="flex items-center justify-between">
                           <div className="flex-1 min-w-0">
@@ -1808,7 +1816,7 @@ export default function Services() {
                               <p className="text-xs text-muted-foreground truncate">{item.issue_description}</p>
                             )}
                           </div>
-                          {item.resolved && <Badge className="bg-emerald-500/10 text-emerald-500 text-xs">✓ Resolved</Badge>}
+                          {item.resolved && <Badge className="bg-emerald-500/10 text-emerald-500 text-xs">Done</Badge>}
                         </div>
                         
                         {/* Individual Warranty Selection */}
@@ -1832,7 +1840,7 @@ export default function Services() {
                         
                         {/* Individual Price Input */}
                         <div className="space-y-1">
-                          <Label className="text-xs font-medium text-muted-foreground">Price (₹)</Label>
+                          <Label className="text-xs font-medium text-muted-foreground">Price (Rs.)</Label>
                           <div className="flex items-center gap-2">
                             <Input
                               type="number"
@@ -1859,12 +1867,12 @@ export default function Services() {
               <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Total Batteries:</span>
-                  <span className="font-medium">{ticketToResolveBattery?.items?.filter((i: any) => i.item_type === 'BATTERY').length || 0}</span>
+                  <span className="font-medium">{getBatteryItems(ticketToResolveBattery).length}</span>
                 </div>
                 <div className="flex justify-between text-sm mt-1">
                   <span className="text-muted-foreground">Total Price:</span>
                   <span className="font-semibold">
-                    ₹{Object.values(batteryItemPrices).reduce((sum, p) => sum + (Number(p) || 0), 0).toLocaleString('en-IN')}
+                    {formatCurrency(Object.values(batteryItemPrices).reduce((sum, price) => sum + (Number(price) || 0), 0))}
                   </span>
                 </div>
               </div>
@@ -1875,7 +1883,7 @@ export default function Services() {
                 </Button>
                 <Button type="submit" className="w-full sm:w-auto h-10 gap-2 bg-blue-600 hover:bg-blue-700">
                   <Battery className="h-4 w-4" />
-                  Resolve {ticketToResolveBattery?.items?.filter((i: any) => i.item_type === 'BATTERY').length || 0} Battery(s)
+                  Resolve {getBatteryItems(ticketToResolveBattery).length} Battery(s)
                 </Button>
               </div>
             </form>
@@ -1893,16 +1901,16 @@ export default function Services() {
             </DialogHeader>
             <form onSubmit={handleInverterResolveSubmit} className="space-y-5">
               {/* Show all inverter items with individual resolution and price inputs */}
-              {ticketToResolveInvertor?.items?.filter((i: any) => i.item_type === 'INVERTER').length > 0 && (
+              {getInverterItems(ticketToResolveInvertor).length > 0 && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <Label className="text-sm font-semibold text-muted-foreground">Resolve each inverter:</Label>
                     <Badge variant="outline" className="text-xs">
-                      {ticketToResolveInvertor.items.filter((i: any) => i.item_type === 'INVERTER').length} item(s)
+                      {getInverterItems(ticketToResolveInvertor).length} item(s)
                     </Badge>
                   </div>
                   <div className="max-h-[300px] overflow-y-auto space-y-3">
-                    {ticketToResolveInvertor.items.filter((i: any) => i.item_type === 'INVERTER').map((item: any, idx: number) => (
+                    {getInverterItems(ticketToResolveInvertor).map((item, idx) => (
                       <div key={item.id || idx} className="p-4 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-100 dark:border-amber-900 space-y-3">
                         <div className="flex items-center justify-between">
                           <div className="flex-1 min-w-0">
@@ -1911,7 +1919,7 @@ export default function Services() {
                               <p className="text-xs text-muted-foreground truncate">{item.issue_description}</p>
                             )}
                           </div>
-                          {item.resolved && <Badge className="bg-emerald-500/10 text-emerald-500 text-xs">✓ Resolved</Badge>}
+                          {item.resolved && <Badge className="bg-emerald-500/10 text-emerald-500 text-xs">Done</Badge>}
                         </div>
                         
                         {/* Individual Resolution Status */}
@@ -1935,7 +1943,7 @@ export default function Services() {
                         
                         {/* Individual Price Input */}
                         <div className="space-y-1">
-                          <Label className="text-xs font-medium text-muted-foreground">Price (₹)</Label>
+                          <Label className="text-xs font-medium text-muted-foreground">Price (Rs.)</Label>
                           <div className="flex items-center gap-2">
                             <Input
                               type="number"
@@ -1962,12 +1970,12 @@ export default function Services() {
               <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Total Inverters:</span>
-                  <span className="font-medium">{ticketToResolveInvertor?.items?.filter((i: any) => i.item_type === 'INVERTER').length || 0}</span>
+                  <span className="font-medium">{getInverterItems(ticketToResolveInvertor).length}</span>
                 </div>
                 <div className="flex justify-between text-sm mt-1">
                   <span className="text-muted-foreground">Total Price:</span>
                   <span className="font-semibold">
-                    ₹{Object.values(inverterItemPrices).reduce((sum, p) => sum + (Number(p) || 0), 0).toLocaleString('en-IN')}
+                    {formatCurrency(Object.values(inverterItemPrices).reduce((sum, price) => sum + (Number(price) || 0), 0))}
                   </span>
                 </div>
               </div>
@@ -1990,7 +1998,7 @@ export default function Services() {
                 </Button>
                 <Button type="submit" className="w-full sm:w-auto h-10 gap-2 bg-amber-600 hover:bg-amber-700">
                   <Zap className="h-4 w-4" />
-                  Resolve {ticketToResolveInvertor?.items?.filter((i: any) => i.item_type === 'INVERTER').length || 0} Inverter(s)
+                  Resolve {getInverterItems(ticketToResolveInvertor).length} Inverter(s)
                 </Button>
               </div>
             </form>
@@ -2006,12 +2014,12 @@ export default function Services() {
             {ticketToClose && (
               <form onSubmit={handleCloseSubmit} className="space-y-4">
                 <div className="p-4 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
-                  <p className="text-lg font-semibold text-emerald-700 dark:text-emerald-400">Total Amount: ₹{getTotalPrice(ticketToClose).toFixed(2)}</p>
+                  <p className="text-lg font-semibold text-emerald-700 dark:text-emerald-400">Total Amount: Rs. {getTotalPrice(ticketToClose).toFixed(2)}</p>
                   {ticketToClose.battery_price !== null && ticketToClose.battery_price > 0 && (
-                    <p className="text-sm text-muted-foreground">Battery: ₹{ticketToClose.battery_price.toFixed(2)}</p>
+                    <p className="text-sm text-muted-foreground">Battery: Rs. {ticketToClose.battery_price.toFixed(2)}</p>
                   )}
                   {ticketToClose.invertor_price !== null && ticketToClose.invertor_price > 0 && (
-                    <p className="text-sm text-muted-foreground">Inverter: ₹{ticketToClose.invertor_price.toFixed(2)}</p>
+                    <p className="text-sm text-muted-foreground">Inverter: Rs. {ticketToClose.invertor_price.toFixed(2)}</p>
                   )}
                 </div>
                 <div className="space-y-2">
