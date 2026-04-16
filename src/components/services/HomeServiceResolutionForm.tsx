@@ -46,7 +46,7 @@ export function HomeServiceResolutionForm({
   const [generalNotes, setGeneralNotes] = useState('');
 
   // Payment state
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'UPI' | ''>('');
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'UPI' | 'FOC' | ''>('');
 
   const resetStates = useCallback(() => {
     setBatteryItemWarranty({});
@@ -225,20 +225,34 @@ export function HomeServiceResolutionForm({
         return inverterItemResolved[item.id] === 'yes';
       });
 
+      // Aggregate notes from items - collect ALL notes, not just resolved items
+      const batteryNotesArray = batteryItems
+        .filter(i => batteryItemNotes[i.id]?.trim())
+        .map(i => `${i.model}: ${batteryItemNotes[i.id].trim()}`);
+      
+      const inverterNotesArray = inverterItems
+        .filter(i => inverterItemNotes[i.id]?.trim())
+        .map(i => `${i.model}: ${inverterItemNotes[i.id].trim()}`);
+
+      const batteryNotes = batteryNotesArray.length > 0 ? batteryNotesArray.join('\n') : null;
+      const inverterNotes = inverterNotesArray.length > 0 ? inverterNotesArray.join('\n') : null;
+
+      console.log('Saving notes - Battery:', batteryNotes, 'Inverter:', inverterNotes);
+
       // Create resolution record
       await supabase
         .from('home_service_resolutions')
         .insert({
           request_id: request.id,
           battery_resolved: batteryItems.length > 0 ? batteryItems.every(i => batteryItemResolved[i.id] === 'yes') : null,
-          battery_resolution_notes: generalNotes || null,
+          battery_resolution_notes: batteryNotes,
           battery_within_warranty: batteryItems.length > 0 ? batteryItems.every(i => batteryItemWarranty[i.id] === 'yes') : null,
           battery_price: totalBatteryPrice,
           inverter_resolved: inverterItems.length > 0 ? inverterItems.every(i => inverterItemResolved[i.id] === 'yes') : null,
-          inverter_resolution_notes: generalNotes || null,
+          inverter_resolution_notes: inverterNotes,
           inverter_price: totalInverterPrice,
           total_amount: calculatedTotal,
-          payment_method: calculatedTotal > 0 ? (paymentMethod as 'CASH' | 'CARD' | 'UPI') : null,
+          payment_method: calculatedTotal > 0 ? (paymentMethod as 'CASH' | 'CARD' | 'UPI' | 'FOC') : null,
           resolved_by: user.id,
           resolved_at: new Date().toISOString(),
           closed_by: user.id,
@@ -504,6 +518,7 @@ export function HomeServiceResolutionForm({
                     <SelectItem value="CASH">Cash</SelectItem>
                     <SelectItem value="CARD">Card</SelectItem>
                     <SelectItem value="UPI">UPI</SelectItem>
+                    <SelectItem value="FOC">Free of Cost (FOC)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

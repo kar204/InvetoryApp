@@ -38,7 +38,7 @@ export interface ServiceTicket {
   status: ServiceStatus;
   resolution_notes: string | null;
   service_price: number | null;
-  payment_method: 'CASH' | 'CARD' | 'UPI' | null;
+  payment_method: 'CASH' | 'CARD' | 'UPI' | 'FOC' | null;
   assigned_to: string | null;
   created_by: string;
   created_at: string;
@@ -129,7 +129,7 @@ export interface SecondHandLifecycleRecord {
   quantity: number;
   returned_quantity: number;
   unit_price: number;
-  payment_method: 'CASH' | 'CARD' | 'UPI' | null;
+  payment_method: 'CASH' | 'CARD' | 'UPI' | 'FOC' | null;
   start_date: string | null;
   end_date: string | null;
   remarks: string | null;
@@ -206,7 +206,7 @@ export interface HomeServiceResolution {
   inverter_resolved: boolean | null;
   inverter_resolution_notes: string | null;
   total_amount: number | null;
-  payment_method: 'CASH' | 'CARD' | 'UPI' | null;
+  payment_method: 'CASH' | 'CARD' | 'UPI' | 'FOC' | null;
   resolved_by: string;
   resolved_at: string;
   closed_by: string;

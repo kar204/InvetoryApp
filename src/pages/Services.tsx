@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, Filter, Download, Trash2, Phone, Battery, Zap, Wrench, ChevronRight, X } from 'lucide-react';
+import { Plus, Search, Filter, Download, Trash2, Phone, Battery, Zap, Wrench, ChevronRight, X, CheckCircle } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -1638,8 +1638,9 @@ export default function Services() {
                   </div>
                 )}
 
-                <div className="flex flex-col gap-4 sm:flex-row sm:justify-between">
-                  <div className="flex gap-2 flex-wrap">
+                <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                  {/* Document Actions - Print, Export, Delete */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <PrintTicket
                       ticket={selectedTicket}
                       profileName={getProfileName(selectedTicket.assigned_to_battery)}
@@ -1647,7 +1648,7 @@ export default function Services() {
                     />
                     <Button
                       variant="outline"
-                      size="sm"
+                      className="w-full h-10"
                       onClick={() => handleExportSingle(selectedTicket)}
                     >
                       <Download className="h-4 w-4 mr-2" />
@@ -1656,7 +1657,7 @@ export default function Services() {
                     {canDeleteTicket && (
                       <Button
                         variant="destructive"
-                        size="sm"
+                        className="w-full h-10"
                         onClick={() => setTicketToDelete(selectedTicket)}
                       >
                         <Trash2 className="h-4 w-4 mr-2" />
@@ -1665,12 +1666,13 @@ export default function Services() {
                     )}
                   </div>
 
+                  {/* Assignment & Resolution Workflow */}
                   <div className="flex gap-2 flex-wrap">
                     {/* Assign SP Battery */}
                     {canAssignTicket && !selectedTicket.assigned_to_battery && selectedTicket.status === 'OPEN' && (
                       <Select onValueChange={(value) => handleAssignBattery(selectedTicket.id, value)}>
-                        <SelectTrigger className="w-[180px]">
-                          <SelectValue placeholder="Assign SP Battery..." />
+                        <SelectTrigger className="h-10 flex-1 sm:flex-none sm:w-[220px]">
+                          <SelectValue placeholder="🔋 Assign Battery SP" />
                         </SelectTrigger>
                         <SelectContent>
                           {spBatteryProfiles.map((profile) => (
@@ -1685,8 +1687,8 @@ export default function Services() {
                     {/* Assign SP Invertor */}
                     {canAssignTicket && selectedTicket.invertor_model && !selectedTicket.assigned_to_invertor && (
                       <Select onValueChange={(value) => handleAssignInvertor(selectedTicket.id, value)}>
-                        <SelectTrigger className="w-[180px]">
-                          <SelectValue placeholder="Assign SP Invertor..." />
+                        <SelectTrigger className="h-10 flex-1 sm:flex-none sm:w-[220px]">
+                          <SelectValue placeholder="⚡ Assign Invertor SP" />
                         </SelectTrigger>
                         <SelectContent>
                           {spInvertorProfiles.map((profile) => (
@@ -1697,32 +1699,34 @@ export default function Services() {
                         </SelectContent>
                       </Select>
                     )}
+                  </div>
 
-                    {/* Resolve Items */}
-                    {selectedTicket.status === 'IN_PROGRESS' && (
-                      <div className="space-y-3">
-                        <Label className="text-sm font-semibold">Resolve Items:</Label>
-                        
-                        {/* Show all items as a summary */}
-                        {selectedTicket.items?.length > 0 && (
-                          <div className="flex flex-wrap gap-2 p-3 bg-muted/30 rounded-lg">
-                            {selectedTicket.items.map((item, idx) => (
-                              <Badge 
-                                key={idx} 
-                                variant={item.item_type === 'BATTERY' ? 'default' : 'secondary'}
-                                className={item.resolved ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : ''}
-                              >
-                                {item.item_type === 'BATTERY' ? <Battery className="h-3 w-3 mr-1" /> : <Zap className="h-3 w-3 mr-1" />}
-                                {item.model} {item.resolved && 'Done'}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
+                  {/* Resolve Items Section - Only when IN_PROGRESS */}
+                  {selectedTicket.status === 'IN_PROGRESS' && (
+                    <div className="p-4 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-100 dark:border-amber-900 space-y-3">
+                      <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">Item Resolution Status:</p>
+                      
+                      {/* Show all items as a summary */}
+                      {selectedTicket.items?.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {selectedTicket.items.map((item, idx) => (
+                            <Badge 
+                              key={idx} 
+                              variant={item.item_type === 'BATTERY' ? 'default' : 'secondary'}
+                              className={item.resolved ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : ''}
+                            >
+                              {item.item_type === 'BATTERY' ? <Battery className="h-3 w-3 mr-1" /> : <Zap className="h-3 w-3 mr-1" />}
+                              {item.model} {item.resolved && '✓'}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
 
-                        {/* Battery Resolve Button */}
+                      {/* Resolve Buttons */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {canResolveBattery(selectedTicket) && !selectedTicket.battery_resolved && (
                           <Button 
-                            className="w-full gap-2"
+                            className="h-10 gap-2 bg-blue-600 hover:bg-blue-700"
                             onClick={() => {
                               const ticket = selectedTicket;
                               setSelectedTicket(null);
@@ -1734,15 +1738,13 @@ export default function Services() {
                             }}
                           >
                             <Battery className="h-4 w-4" />
-                            Resolve All Batteries
+                            Resolve Batteries
                           </Button>
                         )}
 
-                        {/* Inverter Resolve Button */}
                         {canResolveInvertor(selectedTicket) && !selectedTicket.invertor_resolved && (
                           <Button 
-                            className="w-full gap-2"
-                            variant="secondary"
+                            className="h-10 gap-2 bg-amber-600 hover:bg-amber-700"
                             onClick={() => {
                               const ticket = selectedTicket;
                               setSelectedTicket(null);
@@ -1755,31 +1757,32 @@ export default function Services() {
                             }}
                           >
                             <Zap className="h-4 w-4" />
-                            Resolve All Inverters
+                            Resolve Inverters
                           </Button>
                         )}
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    {/* Close Ticket - only when all items resolved */}
-                    {canCloseTicket && (() => {
-                      const allResolved = selectedTicket.items?.length > 0
-                        ? selectedTicket.items.every((item) => item.resolved)
-                        : selectedTicket.battery_resolved !== false && selectedTicket.invertor_resolved !== false;
-                      return selectedTicket.status !== 'CLOSED' && allResolved;
-                    })() && (
-                      <Button
-                        className="w-full gap-2 bg-emerald-500 hover:bg-emerald-600"
-                        onClick={() => {
-                          setSelectedTicket(null);
-                          setTicketToClose(selectedTicket);
-                          setPaymentMethod('');
-                        }}
-                      >
-                        Close Ticket
-                      </Button>
-                    )}
-                  </div>
+                  {/* Close Ticket - Only when all resolved */}
+                  {canCloseTicket && (() => {
+                    const allResolved = selectedTicket.items?.length > 0
+                      ? selectedTicket.items.every((item) => item.resolved)
+                      : selectedTicket.battery_resolved !== false && selectedTicket.invertor_resolved !== false;
+                    return selectedTicket.status !== 'CLOSED' && allResolved;
+                  })() && (
+                    <Button
+                      className="w-full h-11 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-base"
+                      onClick={() => {
+                        setSelectedTicket(null);
+                        setTicketToClose(selectedTicket);
+                        setPaymentMethod('');
+                      }}
+                    >
+                      <CheckCircle className="h-5 w-5" />
+                      Close Ticket & Collect Payment
+                    </Button>
+                  )}
                 </div>
               </div>
             )}

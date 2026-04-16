@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Recycle, PackageOpen, Check, TrendingUp, TrendingDown, Trash2, Plus, X } from 'lucide-react';
+import { Search, Recycle, PackageOpen, Check, TrendingUp, TrendingDown, Trash2, Plus, X, Download } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
+import { downloadCSV } from '@/utils/exportUtils';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -241,6 +242,47 @@ export default function Scrap() {
   const totalInUnits = entries.filter(e => e.status === 'IN').reduce((s, e) => s + (e.quantity || 0), 0);
   const totalOutUnits = entries.filter(e => e.status === 'OUT').reduce((s, e) => s + (e.quantity || 0), 0);
 
+  const formatScrapForExport = (entries: ScrapEntry[]) => {
+    const formatted = entries.map(entry => ({
+      'Customer': entry.customer_name,
+      'Category': entry.scrap_item,
+      'Model': entry.scrap_model,
+      'Qty': entry.quantity,
+      'Value (Rs.)': entry.scrap_value || 0,
+      'Date': format(new Date(entry.created_at), 'dd/MM/yyyy'),
+      'Status': entry.status,
+    }));
+    
+    // Add totals row
+    if (formatted.length > 0) {
+      const totalQty = entries.reduce((sum, e) => sum + (e.quantity || 0), 0);
+      const totalValue = entries.reduce((sum, e) => sum + (e.scrap_value || 0), 0);
+      formatted.push({
+        'Customer': 'TOTAL',
+        'Category': '',
+        'Model': '',
+        'Qty': totalQty,
+        'Value (Rs.)': totalValue,
+        'Date': '',
+        'Status': '',
+      });
+    }
+    return formatted;
+  };
+
+  const handleExportStatus = (entries: ScrapEntry[]) => {
+    if (entries.length === 0) {
+      toast({ title: 'No entries to export', variant: 'destructive' });
+      return;
+    }
+    const formatted = formatScrapForExport(entries);
+    const dateStr = format(new Date(), 'dd-MM-yyyy');
+    const inCount = entries.filter(e => e.status === 'IN').length;
+    const outCount = entries.filter(e => e.status === 'OUT').length;
+    downloadCSV(formatted, `scrap-status-${dateStr}`);
+    toast({ title: `Exported ${entries.length} entries`, description: `IN: ${inCount} | OUT: ${outCount}` });
+  };
+
   const renderTable = (items: ScrapEntry[], showMarkOut: boolean) => (
     <div className="overflow-x-auto">
       <Table className="w-full text-sm">
@@ -444,9 +486,19 @@ export default function Scrap() {
           </div>
         </div>
 
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Search scrap entries..." value={search} onChange={e => setSearch(e.target.value)} className="pl-10 max-w-md" />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Search scrap entries..." value={search} onChange={e => setSearch(e.target.value)} className="pl-10 w-full" />
+          </div>
+          <Button 
+            variant="outline" 
+            className="gap-2 h-10"
+            onClick={() => handleExportStatus(entries)}
+          >
+            <Download className="h-4 w-4" />
+            Export All
+          </Button>
         </div>
 
         {loading ? (

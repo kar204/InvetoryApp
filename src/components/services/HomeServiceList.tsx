@@ -15,7 +15,7 @@ interface HomeServiceListProps {
   initialSearch?: string;
 }
 
-type HomeServiceRequestResolution = Pick<HomeServiceResolution, 'request_id' | 'total_amount'> & {
+type HomeServiceRequestResolution = Pick<HomeServiceResolution, 'request_id' | 'total_amount' | 'battery_resolution_notes' | 'inverter_resolution_notes'> & {
   battery_price: number | null;
   battery_within_warranty: boolean | null;
   inverter_price: number | null;
@@ -278,6 +278,18 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
                               <span className="text-slate-500">
                                 (Inverter: {formatCurrency(request.resolution?.inverter_price || 0)})
                               </span>
+                            )}
+                          </div>
+                        )}
+
+                        {request.status === 'CLOSED' && (request.resolution?.battery_resolution_notes || request.resolution?.inverter_resolution_notes) && (
+                          <div className="mt-2 space-y-1 border-t pt-1">
+                            <p className="text-xs font-semibold text-muted-foreground">Resolution Notes:</p>
+                            {request.resolution?.battery_resolution_notes && (
+                              <p className="text-xs text-slate-600 dark:text-slate-400">🔋 {request.resolution.battery_resolution_notes}</p>
+                            )}
+                            {request.resolution?.inverter_resolution_notes && (
+                              <p className="text-xs text-slate-600 dark:text-slate-400">⚡ {request.resolution.inverter_resolution_notes}</p>
                             )}
                           </div>
                         )}

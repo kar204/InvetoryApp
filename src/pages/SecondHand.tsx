@@ -68,7 +68,7 @@ export default function SecondHand() {
     customer_name: '',
     mobile_number: '',
     address: '',
-    payment_method: 'CASH' as 'CASH' | 'CARD' | 'UPI',
+    payment_method: 'CASH' as 'CASH' | 'CARD' | 'UPI' | 'FOC',
     start_date: '',
     end_date: '',
     remarks: ''
@@ -937,7 +937,7 @@ export default function SecondHand() {
                           onValueChange={(value) =>
                             setTransactionForm({
                               ...transactionForm,
-                              payment_method: value as 'CASH' | 'CARD' | 'UPI',
+                              payment_method: value as 'CASH' | 'CARD' | 'UPI' | 'FOC',
                             })
                           }
                         >
@@ -946,6 +946,7 @@ export default function SecondHand() {
                             <SelectItem value="CASH">Cash</SelectItem>
                             <SelectItem value="CARD">Card</SelectItem>
                             <SelectItem value="UPI">UPI</SelectItem>
+                            <SelectItem value="FOC">Free of Cost (FOC)</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
