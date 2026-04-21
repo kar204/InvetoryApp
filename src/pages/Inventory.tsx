@@ -72,7 +72,7 @@ export default function Inventory() {
     service_technician: 'Home Technician',
     sp_invertor: 'SP Invertor',
   };
-  const productCategories = ['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF', 'Spares'];
+  const productCategories = ['Battery', 'Inverter', 'UPS', 'Trolly', 'Solar Panel', 'Charger', 'SMF', 'DM Water', 'Spares'];
   const productCategoryLabels: Record<string, string> = {
     Battery: 'Batteries',
     Inverter: 'Inverters',
@@ -81,6 +81,7 @@ export default function Inventory() {
     'Solar Panel': 'Solar Panels',
     Charger: 'Chargers',
     SMF: 'SMFs',
+    'DM Water': 'DM Water',
     Spares: 'Spares',
   };
   const location = useLocation();

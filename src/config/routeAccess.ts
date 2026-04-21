@@ -4,6 +4,7 @@ export type AppRoutePath =
   | '/dashboard'
   | '/services'
   | '/inventory'
+  | '/aged'
   | '/second-hand'
   | '/scrap'
   | '/transactions'
@@ -30,6 +31,11 @@ export const APP_ROUTE_ACCESS: AppRouteAccess[] = [
     path: '/inventory',
     title: 'Inventory',
     roles: ['admin', 'warehouse_staff', 'procurement_staff'],
+  },
+  {
+    path: '/aged',
+    title: 'Aged Batteries',
+    roles: ['admin', 'warehouse_staff', 'procurement_staff', 'inventory_person', 'seller', 'scrap_manager'],
   },
   {
     path: '/second-hand',

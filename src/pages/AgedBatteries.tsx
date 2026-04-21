@@ -118,7 +118,9 @@ export default function AgedBatteries() {
   const isMobile = useIsMobile();
 
   const isAdmin = hasRole('admin');
-  const canManage = hasAnyRole(['admin', 'warehouse_staff']);
+  const canManage = hasAnyRole(['admin', 'warehouse_staff', 'procurement_staff', 'inventory_person']);
+  const canScrap = hasAnyRole(['admin', 'warehouse_staff', 'procurement_staff', 'inventory_person', 'scrap_manager']);
+  const canSellRent = hasAnyRole(['admin', 'warehouse_staff', 'procurement_staff', 'inventory_person', 'seller']);
 
   const [activeTab, setActiveTab] = useState<'inventory' | 'transfer' | 'transactions' | 'rentals' | 'analytics'>('inventory');
 
@@ -917,10 +919,10 @@ export default function AgedBatteries() {
 
   const getStatusColor = (status: AgedBatteryStatus) => STATUS_COLORS[status] || STATUS_COLORS.IN_STOCK;
 
-  const canRent = (status: AgedBatteryStatus) => status === 'IN_STOCK' || status === 'RETURNED';
-  const canReturn = (status: AgedBatteryStatus) => status === 'RENTED';
-  const canScrap = (status: AgedBatteryStatus) => status === 'IN_STOCK' || status === 'RETURNED';
-  const canSell = (status: AgedBatteryStatus) => status === 'IN_STOCK' || status === 'RETURNED';
+  const canRentStatus = (status: AgedBatteryStatus) => status === 'IN_STOCK' || status === 'RETURNED';
+  const canReturnStatus = (status: AgedBatteryStatus) => status === 'RENTED';
+  const canScrapStatus = (status: AgedBatteryStatus) => status === 'IN_STOCK' || status === 'RETURNED';
+  const canSellStatus = (status: AgedBatteryStatus) => status === 'IN_STOCK' || status === 'RETURNED';
 
   const handleDeleteSale = async (battery: AgedBattery) => {
     if (!user?.id || !isAdmin) return;
@@ -1085,7 +1087,7 @@ export default function AgedBatteries() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
-                              {canRent(battery.status) && (
+                              {canSellRent && canRentStatus(battery.status) && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -1097,7 +1099,7 @@ export default function AgedBatteries() {
                                   Rent
                                 </Button>
                               )}
-                              {canReturn(battery.status) && (
+                              {canManage && canReturnStatus(battery.status) && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -1107,7 +1109,7 @@ export default function AgedBatteries() {
                                   Return
                                 </Button>
                               )}
-                              {canSell(battery.status) && (
+                              {canSellRent && canSellStatus(battery.status) && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -1128,7 +1130,7 @@ export default function AgedBatteries() {
                                   {battery.claimed ? 'Unclaim' : 'Claim'}
                                 </Button>
                               )}
-                              {canScrap(battery.status) && (
+                              {canScrap && canScrapStatus(battery.status) && (
                                 <Button
                                   size="sm"
                                   variant="ghost"

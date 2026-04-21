@@ -1,4 +1,4 @@
-export type AppRole = 'admin' | 'counter_staff' | 'service_agent' | 'warehouse_staff' | 'procurement_staff' | 'sp_battery' | 'sp_invertor' | 'scrap_manager' | 'service_technician';
+export type AppRole = 'admin' | 'counter_staff' | 'service_agent' | 'warehouse_staff' | 'procurement_staff' | 'sp_battery' | 'sp_invertor' | 'scrap_manager' | 'service_technician' | 'inventory_person' | 'seller';
 
 export type ServiceStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
 
@@ -30,6 +30,7 @@ export interface UserRole {
 export interface ServiceTicket {
   id: string;
   ticket_number: string | null;
+  tally_ticket_number: string | null;
   customer_name: string;
   customer_phone: string;
   battery_model: string;
@@ -37,6 +38,7 @@ export interface ServiceTicket {
   issue_description: string;
   status: ServiceStatus;
   resolution_notes: string | null;
+  closing_notes: string | null;
   service_price: number | null;
   payment_method: 'CASH' | 'CARD' | 'UPI' | 'FOC' | null;
   assigned_to: string | null;

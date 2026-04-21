@@ -485,12 +485,14 @@ export default function Services() {
 
   // Close ticket state
   const [ticketToClose, setTicketToClose] = useState<ServiceTicket | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'UPI' | ''>('');
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'UPI' | 'FOC' | ''>('');
+  const [closingNotes, setClosingNotes] = useState('');
 
   // Form state
   const [formData, setFormData] = useState({
     customer_name: '',
     customer_phone: '',
+    tally_ticket_number: '',
     battery_model: '',
     invertor_model: '',
     issue_description: '',
@@ -710,6 +712,7 @@ export default function Services() {
       const { data: ticket, error } = await supabase.from('service_tickets').insert({
         customer_name: formData.customer_name,
         customer_phone: formData.customer_phone,
+        tally_ticket_number: formData.tally_ticket_number || null,
         battery_model: firstBattery?.model || formData.battery_model || '-',
         invertor_model: firstInverter?.model || formData.invertor_model || null,
         issue_description: firstBattery?.issue_description || firstInverter?.issue_description || formData.issue_description,
@@ -767,6 +770,7 @@ export default function Services() {
       setFormData({
         customer_name: '',
         customer_phone: '',
+        tally_ticket_number: '',
         battery_model: '',
         invertor_model: '',
         issue_description: '',
@@ -1060,6 +1064,7 @@ export default function Services() {
         .update({
           status: 'CLOSED',
           payment_method: paymentMethod,
+          closing_notes: closingNotes || null,
         })
         .eq('id', ticketToClose.id);
 
@@ -1068,6 +1073,7 @@ export default function Services() {
       await supabase.from('service_logs').insert({
         ticket_id: ticketToClose.id,
         action: `Ticket closed (payment: ${paymentMethod})`,
+        notes: closingNotes || null,
         user_id: user.id,
       });
 
@@ -1085,6 +1091,7 @@ export default function Services() {
 
       setTicketToClose(null);
       setPaymentMethod('');
+      setClosingNotes('');
       setSelectedTicket(null);
       fetchTickets();
     } catch (error: unknown) {
@@ -1157,6 +1164,14 @@ export default function Services() {
 
   // Check if current user can resolve battery part
   const canResolveBattery = (ticket: ServiceTicket) => {
+    // Check if there are battery items in new schema
+    const hasBatteryItems = ticket.items?.some(item => item.item_type === 'BATTERY') || false;
+    // Check if old schema has battery assigned
+    const hasBatteryModel = ticket.battery_model && ticket.battery_model !== '-';
+    
+    // Don't show resolve button if no battery was assigned
+    if (!hasBatteryItems && !hasBatteryModel) return false;
+    
     if (isAdmin || isCounterStaff) return true;
     if (isSpBattery && ticket.assigned_to_battery === user?.id) return true;
     return false;
@@ -1164,7 +1179,14 @@ export default function Services() {
 
   // Check if current user can resolve invertor part
   const canResolveInvertor = (ticket: ServiceTicket) => {
-    if (!ticket.invertor_model) return false;
+    // Check if there are inverter items in new schema
+    const hasInverterItems = ticket.items?.some(item => item.item_type === 'INVERTER') || false;
+    // Check if old schema has inverter assigned
+    const hasInvertorModel = ticket.invertor_model && ticket.invertor_model.trim() !== '';
+    
+    // Don't show resolve button if no inverter was assigned
+    if (!hasInverterItems && !hasInvertorModel) return false;
+    
     if (isAdmin || isCounterStaff) return true;
     if (isSpInvertor && ticket.assigned_to_invertor === user?.id) return true;
     return false;
@@ -1217,20 +1239,30 @@ export default function Services() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="customer_phone" className="text-sm text-slate-600 dark:text-slate-400">Phone Number</Label>
+                    <Label htmlFor="tally_ticket_number" className="text-sm text-slate-600 dark:text-slate-400">Tally Ticket #</Label>
                     <Input
-                      id="customer_phone"
-                      type="tel"
-                      value={formData.customer_phone}
-                      onChange={(e) => {
-                        const value = e.target.value.replace(/\D/g, '');
-                        setFormData({ ...formData, customer_phone: value });
-                      }}
-                      placeholder="Phone number"
-                      required
+                      id="tally_ticket_number"
+                      value={formData.tally_ticket_number}
+                      onChange={(e) => setFormData({ ...formData, tally_ticket_number: e.target.value })}
+                      placeholder="Tally reference number"
                       className="h-10 bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5"
                     />
                   </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="customer_phone" className="text-sm text-slate-600 dark:text-slate-400">Phone Number</Label>
+                  <Input
+                    id="customer_phone"
+                    type="tel"
+                    value={formData.customer_phone}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '');
+                      setFormData({ ...formData, customer_phone: value });
+                    }}
+                    placeholder="Phone number"
+                    required
+                    className="h-10 bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5"
+                  />
                 </div>
                 {/* Multiple Items Section */}
                 <div className="space-y-3">
@@ -1766,9 +1798,21 @@ export default function Services() {
 
                   {/* Close Ticket - Only when all resolved */}
                   {canCloseTicket && (() => {
-                    const allResolved = selectedTicket.items?.length > 0
-                      ? selectedTicket.items.every((item) => item.resolved)
-                      : selectedTicket.battery_resolved !== false && selectedTicket.invertor_resolved !== false;
+                    let allResolved = false;
+                    
+                    if (selectedTicket.items?.length > 0) {
+                      // New schema: check all items are resolved
+                      allResolved = selectedTicket.items.every((item) => item.resolved);
+                    } else {
+                      // Old schema: check battery and invertor resolution
+                      // Battery: resolved if not assigned OR explicitly resolved
+                      const batteryResolved = !selectedTicket.battery_model || selectedTicket.battery_model === '-' || selectedTicket.battery_resolved === true;
+                      // Invertor: resolved if not assigned OR explicitly resolved
+                      const invertorResolved = !selectedTicket.invertor_model || selectedTicket.invertor_resolved === true;
+                      
+                      allResolved = batteryResolved && invertorResolved;
+                    }
+                    
                     return selectedTicket.status !== 'CLOSED' && allResolved;
                   })() && (
                     <Button
@@ -2009,7 +2053,13 @@ export default function Services() {
         </Dialog>
 
         {/* Close Ticket Dialog */}
-        <Dialog open={!!ticketToClose} onOpenChange={() => setTicketToClose(null)}>
+        <Dialog open={!!ticketToClose} onOpenChange={(open) => {
+          if (!open) {
+            setTicketToClose(null);
+            setClosingNotes('');
+            setPaymentMethod('');
+          }
+        }}>
           <DialogContent className="max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Close Ticket</DialogTitle>
@@ -2030,7 +2080,7 @@ export default function Services() {
                   <Select
                     value={paymentMethod}
                     onValueChange={(value) =>
-                      setPaymentMethod(value as 'CASH' | 'CARD' | 'UPI')
+                      setPaymentMethod(value as 'CASH' | 'CARD' | 'UPI' | 'FOC')
                     }
                   >
                     <SelectTrigger className="w-full h-11">
@@ -2040,11 +2090,26 @@ export default function Services() {
                       <SelectItem value="CASH">Cash</SelectItem>
                       <SelectItem value="CARD">Card</SelectItem>
                       <SelectItem value="UPI">UPI</SelectItem>
+                      <SelectItem value="FOC">Free of Cost (FOC)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="closing_notes" className="text-sm font-medium">Closing Notes (Optional)</Label>
+                  <Textarea
+                    id="closing_notes"
+                    value={closingNotes}
+                    onChange={(e) => setClosingNotes(e.target.value)}
+                    placeholder="Add any closing remarks or notes..."
+                    className="min-h-[100px] bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5"
+                  />
+                </div>
                 <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2">
-                  <Button type="button" variant="outline" onClick={() => setTicketToClose(null)} className="w-full sm:w-auto">
+                  <Button type="button" variant="outline" onClick={() => {
+                    setTicketToClose(null);
+                    setClosingNotes('');
+                    setPaymentMethod('');
+                  }} className="w-full sm:w-auto">
                     Cancel
                   </Button>
                   <Button type="submit" disabled={!paymentMethod} className="w-full sm:w-auto gap-2">

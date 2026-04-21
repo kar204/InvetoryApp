@@ -38,7 +38,7 @@ const menuItems: MenuItem[] = [
   { title: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', roles: ['admin', 'warehouse_staff', 'procurement_staff'] },
   { title: 'Service Tickets', icon: Wrench, path: '/services', roles: ['admin', 'counter_staff', 'service_agent', 'sp_battery', 'sp_invertor', 'service_technician'] },
   { title: 'Inventory', icon: Package, path: '/inventory', roles: ['admin', 'warehouse_staff', 'procurement_staff'] },
-  { title: 'Aged Batteries', icon: Battery, path: '/aged', roles: ['admin', 'warehouse_staff'] },
+  { title: 'Aged Batteries', icon: Battery, path: '/aged', roles: ['admin', 'warehouse_staff', 'procurement_staff', 'inventory_person', 'seller', 'scrap_manager'] },
   { title: 'Second Hand', icon: Repeat2, path: '/second-hand', roles: ['admin', 'warehouse_staff', 'procurement_staff'] },
   { title: 'Scrap', icon: Recycle, path: '/scrap', roles: ['admin', 'scrap_manager'] },
   { title: 'Customers', icon: UserRound, path: '/customers', roles: ['admin'] },
