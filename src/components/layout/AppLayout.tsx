@@ -303,12 +303,12 @@ export function AppLayout({ children }: AppLayoutProps) {
             <div className="flex-1 max-w-[320px] hidden lg:flex items-center justify-center">
               <button
                 onClick={() => setOpen(true)}
-                className="w-full relative flex items-center pl-10 pr-16 rounded-full border border-slate-200 bg-white text-sm text-slate-600 shadow-inner transition-all duration-300 group hover:border-[#4F8CFF]/40 hover:bg-white hover:text-slate-900 focus-visible:ring-1 focus-visible:ring-[#4F8CFF]/40 dark:border-white/5 dark:bg-[#111827]/80 dark:text-slate-400 dark:hover:bg-[#111827] dark:hover:text-white"
+                className="w-full relative flex items-center pl-10 pr-16 rounded-full border border-border bg-muted/50 text-sm text-muted-foreground shadow-sm transition-all duration-300 group hover:border-[#4F8CFF]/40 hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-[#4F8CFF]/30"
               >
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 transition-colors group-hover:text-[#4F8CFF] dark:text-slate-400" />
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground transition-colors group-hover:text-[#4F8CFF]" />
                 <span>Global search...</span>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
-                  <kbd className="inline-flex items-center text-[10px] font-bold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-[#1B2438] px-1.5 py-0.5 rounded shadow-sm border border-slate-200 dark:border-white/10 uppercase font-mono tracking-tighter">Ctrl K</kbd>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                  <kbd className="inline-flex items-center text-[10px] font-bold text-muted-foreground bg-background px-1.5 py-0.5 rounded shadow-sm border border-border uppercase font-mono tracking-tighter">Ctrl K</kbd>
                 </div>
               </button>
             </div>
@@ -318,7 +318,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setOpen(true)}
-                  className="lg:hidden relative rounded-full p-2.5 text-slate-600 transition-all group hover:bg-white/5 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+                  className="lg:hidden relative rounded-full p-2.5 text-muted-foreground transition-all group hover:bg-accent hover:text-foreground"
                 >
                   <Search className="h-5 w-5 hover:scale-110 duration-300" />
                 </button>
@@ -340,12 +340,12 @@ export function AppLayout({ children }: AppLayoutProps) {
 
                   {/* Notification Dropdown Panel */}
                   {notifOpen && (
-                    <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-2xl bg-white dark:bg-[#111827] border border-slate-200 dark:border-white/10 shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                    <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-2xl bg-popover border border-border shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                       {/* Header */}
-                      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-white/5">
+                      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
                         <div className="flex items-center gap-2">
                           <Bell className="h-4 w-4 text-[#4F8CFF]" />
-                          <span className="text-sm font-bold text-slate-900 dark:text-white">Notifications</span>
+                          <span className="text-sm font-bold text-popover-foreground">Notifications</span>
                           {notifications.length > 0 && (
                             <span className="text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1.5 py-0.5 rounded-full">{notifications.length}</span>
                           )}
@@ -354,12 +354,12 @@ export function AppLayout({ children }: AppLayoutProps) {
                           {notifications.length > 0 && (
                             <button
                               onClick={() => setNotifications([])}
-                              className="text-[10px] font-semibold text-slate-500 hover:text-slate-900 dark:hover:text-white flex items-center gap-1 transition-colors"
+                              className="text-[10px] font-semibold text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
                             >
                               <CheckCheck className="h-3 w-3" /> Clear all
                             </button>
                           )}
-                          <button onClick={() => setNotifOpen(false)} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-white/5 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors">
+                          <button onClick={() => setNotifOpen(false)} className="p-1 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition-colors">
                             <X className="h-3.5 w-3.5" />
                           </button>
                         </div>
@@ -368,25 +368,25 @@ export function AppLayout({ children }: AppLayoutProps) {
                       {/* Notification List */}
                       <div className="max-h-80 overflow-y-auto styled-scrollbar">
                         {notifications.length === 0 ? (
-                          <div className="flex flex-col items-center justify-center py-10 gap-3 text-slate-400">
+                          <div className="flex flex-col items-center justify-center py-10 gap-3 text-muted-foreground">
                             <Bell className="h-8 w-8 opacity-30" />
                             <p className="text-sm font-medium">All caught up!</p>
-                            <p className="text-xs text-slate-500">New sales and stock alerts will appear here.</p>
+                            <p className="text-xs text-muted-foreground">New sales and stock alerts will appear here.</p>
                           </div>
                         ) : (
                           notifications.map(n => (
-                            <div key={n.id} className="flex items-start gap-3 p-3 border-b border-slate-50 dark:border-white/[0.03] hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors group/notif">
+                            <div key={n.id} className="flex items-start gap-3 p-3 border-b border-border hover:bg-accent/50 transition-colors group/notif">
                               <div className={`mt-0.5 h-8 w-8 shrink-0 rounded-full flex items-center justify-center ${n.type === 'sale' ? 'bg-emerald-500/10 text-emerald-400' : n.type === 'alert' ? 'bg-rose-500/10 text-rose-400' : 'bg-[#4F8CFF]/10 text-[#4F8CFF]'}`}>
                                 {n.type === 'sale' ? <ShoppingCart className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-semibold text-slate-900 dark:text-white">{n.title}</p>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">{n.desc}</p>
-                                <p className="text-[10px] text-slate-400 mt-1">{n.time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
+                                <p className="text-sm font-semibold text-popover-foreground">{n.title}</p>
+                                <p className="text-xs text-muted-foreground mt-0.5 truncate">{n.desc}</p>
+                                <p className="text-[10px] text-muted-foreground mt-1">{n.time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
                               </div>
                               <button
                                 onClick={() => setNotifications(prev => prev.filter(x => x.id !== n.id))}
-                                className="opacity-0 group-hover/notif:opacity-100 p-1 rounded-md hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 hover:text-slate-600 dark:hover:text-white transition-all"
+                                className="opacity-0 group-hover/notif:opacity-100 p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-all"
                               >
                                 <X className="h-3 w-3" />
                               </button>
@@ -413,17 +413,17 @@ export function AppLayout({ children }: AppLayoutProps) {
                         </div>
                       </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-56 mt-2 bg-white dark:bg-[#111827] border-slate-200 dark:border-white/10 shadow-xl rounded-xl">
+                    <DropdownMenuContent align="end" className="w-56 mt-2 bg-popover border-border shadow-xl rounded-xl">
                       <DropdownMenuLabel className="font-normal">
                         <div className="flex flex-col space-y-1 p-1">
-                          <p className="text-sm font-medium leading-none text-slate-900 dark:text-white">{profile?.name || 'User'}</p>
+                          <p className="text-sm font-medium leading-none text-popover-foreground">{profile?.name || 'User'}</p>
                           <p className="text-xs leading-none text-muted-foreground mt-1">
                             {roles.length > 0 ? roles[0].replace('_', ' ') : 'No role assigned'}
                           </p>
                         </div>
                       </DropdownMenuLabel>
-                      <DropdownMenuSeparator className="bg-white/10" />
-                      <DropdownMenuItem onClick={handleSignOut} className="cursor-pointer text-red-400 focus:text-red-400 hover:bg-red-400/10 focus:bg-red-400/10 rounded-md px-3 py-2">
+                      <DropdownMenuSeparator className="bg-border" />
+                      <DropdownMenuItem onClick={handleSignOut} className="cursor-pointer text-destructive focus:text-destructive hover:bg-destructive/10 focus:bg-destructive/10 rounded-md px-3 py-2">
                         <LogOut className="mr-2 h-4 w-4" />
                         <span>Log out</span>
                       </DropdownMenuItem>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpCircle, ArrowDownCircle, Search, RefreshCw, ShoppingCart, Package, Trash2 } from 'lucide-react';
+import { ArrowUpCircle, ArrowDownCircle, RefreshCw, ShoppingCart, Package, Trash2 } from 'lucide-react';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -124,7 +124,7 @@ export default function Transactions() {
     fetchData();
   }, []);
 
-  usePollingRefresh(fetchData, 30000);
+  usePollingRefresh(fetchData, 60000);
 
   const isWithinSelectedRange = (dateValue: string) => {
     if (dateRange === 'ALL') return true;
@@ -374,15 +374,12 @@ export default function Transactions() {
         </div>
 
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search transactions..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10 max-w-md"
-            />
-          </div>
+          <SearchBar
+            value={search}
+            onChange={setSearch}
+            placeholder="Search transactions..."
+            className="max-w-md"
+          />
           <div className="flex flex-wrap items-center gap-3">
             <Select value={stockTypeFilter} onValueChange={(value) => setStockTypeFilter(value as StockTypeFilter)}>
               <SelectTrigger className="w-[180px]">

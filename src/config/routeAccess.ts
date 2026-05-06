@@ -7,6 +7,7 @@ export type AppRoutePath =
   | '/aged'
   | '/second-hand'
   | '/scrap'
+  | '/customers'
   | '/transactions'
   | '/users';
 
@@ -25,7 +26,7 @@ export const APP_ROUTE_ACCESS: AppRouteAccess[] = [
   {
     path: '/services',
     title: 'Service Tickets',
-    roles: ['admin', 'counter_staff', 'service_agent', 'sp_battery', 'sp_invertor'],
+    roles: ['admin', 'counter_staff', 'service_agent', 'sp_battery', 'sp_invertor', 'service_technician'],
   },
   {
     path: '/inventory',
@@ -46,6 +47,11 @@ export const APP_ROUTE_ACCESS: AppRouteAccess[] = [
     path: '/scrap',
     title: 'Scrap',
     roles: ['admin', 'scrap_manager'],
+  },
+  {
+    path: '/customers',
+    title: 'Customers',
+    roles: ['admin'],
   },
   {
     path: '/transactions',

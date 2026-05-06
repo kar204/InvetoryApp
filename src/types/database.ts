@@ -205,8 +205,11 @@ export interface HomeServiceResolution {
   request_id: string;
   battery_resolved: boolean | null;
   battery_resolution_notes: string | null;
+  battery_within_warranty: boolean | null;
+  battery_price: number | null;
   inverter_resolved: boolean | null;
   inverter_resolution_notes: string | null;
+  inverter_price: number | null;
   total_amount: number | null;
   payment_method: 'CASH' | 'CARD' | 'UPI' | 'FOC' | null;
   resolved_by: string;
@@ -273,6 +276,23 @@ export interface AgedScanLog {
   scan_status: string | null;
   notes: string | null;
   created_at: string;
+}
+
+export interface ScrapEntry {
+  id: string;
+  customer_name: string;
+  scrap_item: string;
+  scrap_model: string;
+  scrap_value: number;
+  status: string;
+  recorded_by: string;
+  marked_out_by: string | null;
+  marked_out_at: string | null;
+  created_at: string;
+  quantity: number;
+  aged_battery_id: string | null;
+  buyback_method: 'SALE' | 'AGED' | 'SCRAP' | null;
+  service_ticket_id: string | null;
 }
 
 export interface AgedBatteryRental {

@@ -510,7 +510,7 @@ export function HomeServiceResolutionForm({
 
               <div className="space-y-1">
                 <Label className="text-sm font-medium">Payment Method</Label>
-                <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as 'CASH' | 'CARD' | 'UPI' | 'FOC')}>
+                <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as 'CASH' | 'CARD' | 'UPI')}>
                   <SelectTrigger className="h-10">
                     <SelectValue placeholder="Select payment method" />
                   </SelectTrigger>

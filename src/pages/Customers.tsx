@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, Trash2, Users } from 'lucide-react';
+import { Trash2, Users } from 'lucide-react';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { useLocation } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -65,7 +66,7 @@ export default function Customers() {
     void fetchCustomersRef.current();
   }, [isAdmin]);
 
-  usePollingRefresh(fetchCustomers, 30000, { enabled: isAdmin });
+  usePollingRefresh(fetchCustomers, 60000, { enabled: isAdmin });
 
   const visibleCustomers = useMemo(() => {
     const q = deferredSearch.trim().toLowerCase();
@@ -140,15 +141,12 @@ export default function Customers() {
           </Card>
         ) : (
           <>
-            <div className="relative max-w-md">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search name, phone, email, city..."
-                className="pl-9"
-              />
-            </div>
+            <SearchBar
+              value={search}
+              onChange={setSearch}
+              placeholder="Search name, phone, email, city..."
+              className="max-w-md"
+            />
 
             {loading ? (
               <Card>

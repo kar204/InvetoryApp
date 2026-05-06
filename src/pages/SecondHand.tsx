@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Plus, Minus, Search, Package, ArrowUpCircle, ArrowDownCircle, Download, Upload, AlertTriangle, Calendar, User, Phone, MapPin, ShoppingCart, FileText, ArrowLeft, ArrowRight, Trash2, Clock, Activity, Info, ArrowUpRight } from 'lucide-react';
+import { Plus, Minus, Package, ArrowUpCircle, ArrowDownCircle, Download, Upload, AlertTriangle, Calendar, User, Phone, MapPin, ShoppingCart, FileText, ArrowLeft, ArrowRight, Trash2, Clock, Activity, Info, ArrowUpRight } from 'lucide-react';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { useLocation } from 'react-router-dom';
@@ -45,6 +46,8 @@ interface BulkUploadRow {
   'New Quantity'?: string | number;
 }
 
+type SecondHandPaymentMethod = 'CASH' | 'CARD' | 'UPI';
+
 export default function SecondHand() {
   const { user, hasRole, hasAnyRole } = useAuth();
   const { toast } = useToast();
@@ -68,7 +71,7 @@ export default function SecondHand() {
     customer_name: '',
     mobile_number: '',
     address: '',
-    payment_method: 'CASH' as 'CASH' | 'CARD' | 'UPI' | 'FOC',
+    payment_method: 'CASH' as SecondHandPaymentMethod,
     start_date: '',
     end_date: '',
     remarks: ''
@@ -129,7 +132,7 @@ export default function SecondHand() {
   usePollingRefresh(() => {
     fetchData();
     fetchLifecycle();
-  }, 30000);
+  }, 60000);
 
   const fetchProfiles = async () => {
     const { data } = await supabase.from('profiles').select('*');
@@ -499,7 +502,8 @@ export default function SecondHand() {
 
       for (const row of rows) {
         const productId = row['Product ID']?.toString().trim();
-        const newQty = parseInt(row['New Quantity']);
+        const newQtyValue = row['New Quantity'];
+        const newQty = typeof newQtyValue === 'number' ? newQtyValue : parseInt(String(newQtyValue ?? ''), 10);
         const productName = row['Product Name']?.toString().trim();
         const model = row['Model']?.toString().trim();
         const category = row['Category']?.toString().trim();
@@ -937,7 +941,7 @@ export default function SecondHand() {
                           onValueChange={(value) =>
                             setTransactionForm({
                               ...transactionForm,
-                              payment_method: value as 'CASH' | 'CARD' | 'UPI' | 'FOC',
+                              payment_method: value as SecondHandPaymentMethod,
                             })
                           }
                         >
@@ -946,7 +950,6 @@ export default function SecondHand() {
                             <SelectItem value="CASH">Cash</SelectItem>
                             <SelectItem value="CARD">Card</SelectItem>
                             <SelectItem value="UPI">UPI</SelectItem>
-                            <SelectItem value="FOC">Free of Cost (FOC)</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -955,8 +958,7 @@ export default function SecondHand() {
                   <div className="space-y-2">
                     <Label>Add Products</Label>
                     <div className="relative">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input placeholder="Search SH products to add..." value={transactionProductSearch} onChange={(e) => setTransactionProductSearch(e.target.value)} className="pl-10" />
+                      <SearchBar placeholder="Search SH products to add..." value={transactionProductSearch} onChange={setTransactionProductSearch} />
                       {transactionProductSearch && filteredTransactionProducts.length > 0 && (
                         <div className="absolute z-10 w-full mt-1 bg-background border rounded-md shadow-lg max-h-48 overflow-auto">
                           {filteredTransactionProducts.map(p => (
@@ -1017,15 +1019,12 @@ export default function SecondHand() {
         {activeTab === 'stock' && (
           <div className="w-full bg-white dark:bg-[#111827]/80 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in duration-500">
             <div className="flex justify-between items-center px-6 py-4 border-b border-slate-200 dark:border-white/10 bg-slate-50/30 dark:bg-slate-900/30">
-              <div className="relative w-full max-w-md group">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 group-focus-within:text-[#4F8CFF] transition-colors" />
-                <Input
-                  placeholder="Search SH products..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-10 h-10 bg-white dark:bg-[#0B0F19] border-slate-200 dark:border-white/10 rounded-xl focus:ring-2 focus:ring-[#4F8CFF]/20 transition-all shadow-sm"
-                />
-              </div>
+              <SearchBar
+                value={search}
+                onChange={setSearch}
+                placeholder="Search SH products..."
+                className="w-full max-w-md"
+              />
             </div>
             <div className="flex flex-col">
               <div className="hidden lg:grid lg:grid-cols-[2fr_1.5fr_1fr_1fr_1.5fr_auto] gap-4 px-6 py-3 bg-slate-50 dark:bg-[#0B0F19]/50 border-b border-slate-200 dark:border-white/10">

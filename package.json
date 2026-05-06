@@ -66,6 +66,8 @@
     "vaul": "^0.9.9",
     "xlsx": "^0.18.5",
     "zod": "^3.25.76"
+    ,
+    "react-window": "^1.8.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",

@@ -78,48 +78,52 @@
 
   .dark {
     --background: 223 39% 7%;
-    /* #0B0F19 */
-    --foreground: 210 20% 95%;
+    /* #0B0F19 — deepest layer */
+    --foreground: 210 20% 97%;
+    /* Near-white text */
 
-    --card: 223 38% 13%;
-    /* #151C2F */
-    --card-foreground: 210 20% 95%;
+    --card: 223 35% 15%;
+    /* #181E31 — clearly above background */
+    --card-foreground: 210 20% 97%;
 
-    --popover: 221 39% 11%;
-    /* #111827 */
-    --popover-foreground: 210 20% 95%;
+    --popover: 221 39% 13%;
+    /* #161C2E */
+    --popover-foreground: 210 20% 97%;
 
     --primary: 219 100% 65%;
     /* #4F8CFF */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 221 39% 11%;
-    --secondary-foreground: 210 20% 95%;
+    --secondary: 221 30% 22%;
+    /* #2A3348 — clearly visible surface */
+    --secondary-foreground: 210 20% 97%;
 
-    --muted: 222 35% 16%;
-    /* #1B2438 */
-    --muted-foreground: 215 15% 60%;
+    --muted: 222 28% 26%;
+    /* #343D54 — raised surface for inputs, search bars */
+    --muted-foreground: 215 20% 72%;
+    /* Clearly readable secondary text */
 
-    --accent: 222 35% 16%;
-    --accent-foreground: 219 100% 65%;
-    /* Accent glow */
+    --accent: 222 30% 28%;
+    /* #3A4460 — hover/accent state */
+    --accent-foreground: 210 20% 97%;
 
     --destructive: 0 84% 60%;
     /* #EF4444 */
     --destructive-foreground: 0 0% 100%;
 
-    --border: 223 38% 18%;
-    /* subtle border */
-    --input: 222 35% 16%;
+    --border: 223 25% 28%;
+    /* #3A4158 — clearly visible borders everywhere */
+    --input: 222 28% 26%;
+    /* #343D54 — input backgrounds visible on cards */
     --ring: 219 100% 65%;
 
     --sidebar-background: 223 39% 7%;
     --sidebar-foreground: 210 20% 95%;
     --sidebar-primary: 219 100% 65%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 222 35% 16%;
-    --sidebar-accent-foreground: 210 20% 95%;
-    --sidebar-border: 223 38% 15%;
+    --sidebar-accent: 222 30% 24%;
+    --sidebar-accent-foreground: 210 20% 97%;
+    --sidebar-border: 223 25% 22%;
     --sidebar-ring: 219 100% 65%;
 
     --chart-1: 211 100% 65%;
@@ -140,8 +144,11 @@
     --shadow-xl: 0 16px 50px -12px rgba(0, 0, 0, 0.45);
     --shadow-2xl: 0 25px 65px -15px rgba(0, 0, 0, 0.5);
 
-    --glass-bg: hsl(223 39% 7% / 0.7);
-    --glass-border: hsl(0 0% 100% / 0.05);
+    --surface: 223 35% 19%;
+    /* Elevated surface — lighter than card for search bars, dropdowns */
+
+    --glass-bg: hsl(223 35% 15% / 0.85);
+    --glass-border: hsl(0 0% 100% / 0.12);
     --glass-blur: 16px;
   }
 }

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { Plus, Minus, Search, Package, ArrowUpCircle, ArrowDownCircle, Download, Trash2, X, Upload, ShoppingCart, AlertTriangle } from 'lucide-react';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { useLocation } from 'react-router-dom';
@@ -16,7 +17,9 @@ import { Product, Profile, StockSource, StockTransaction, TransactionType, Wareh
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { usePollingRefresh } from '@/hooks/usePollingRefresh';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { Badge } from '@/components/ui/badge';
+import VirtualizedStockTable from '@/components/VirtualizedStockTable';
 import { downloadCSV, formatStockForExport } from '@/utils/exportUtils';
 import { isSecondHandCategory } from '@/lib/secondHand';
 import * as XLSX from 'xlsx';
@@ -92,6 +95,7 @@ export default function Inventory() {
   const [loading, setLoading] = useState(true);
   const [recordingSale, setRecordingSale] = useState(false);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [stockFilter, setStockFilter] = useState<StockLevelFilter>('all');
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [isStockTransferOpen, setIsStockTransferOpen] = useState(false);
@@ -285,7 +289,7 @@ export default function Inventory() {
     fetchData();
     fetchSales();
     fetchStockTransactions();
-  }, 30000);
+  }, 60000);
 
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -557,8 +561,8 @@ export default function Inventory() {
     }
   };
 
-  const filteredStock = stock.filter(item => {
-    const searchLower = search.toLowerCase();
+  const filteredStock = useMemo(() => stock.filter(item => {
+    const searchLower = debouncedSearch.toLowerCase();
     const productName = item.product?.name?.toLowerCase() || '';
     const productModel = item.product?.model?.toLowerCase() || '';
     const combined = `${productName} ${productModel}`;
@@ -573,7 +577,7 @@ export default function Inventory() {
     if (stockFilter === 'high') return item.quantity >= 20;
 
     return true;
-  });
+  }), [stock, debouncedSearch, stockFilter]);
 
   const filterByCategory = (category: string) =>
     filteredStock.filter((item) => item.product?.category === category);
@@ -597,6 +601,8 @@ export default function Inventory() {
             <Package className="h-10 w-10 text-slate-700" />
             No products found in this category
           </div>
+        ) : items.length > 35 ? (
+          <VirtualizedStockTable items={items} rowHeight={88} height={650} />
         ) : (
           items.map((item, i) => {
             const health = item.quantity < 5 ? 'critical' : item.quantity < 20 ? 'warning' : 'good';
@@ -1021,12 +1027,12 @@ export default function Inventory() {
                       <Label>Add Products to Sale</Label>
                       <div className="flex gap-2">
                         <div className="relative flex-1">
-                          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                           <Input
                             placeholder="Search products to sell..."
                             value={saleProductSearch}
                             onChange={(e) => setSaleProductSearch(e.target.value)}
-                            className="pl-8"
+                            className="pl-10"
                           />
                           {saleProductSearch.trim().length > 0 && filteredSaleProducts.length > 0 && (
                             <div className="absolute z-10 w-full mt-1 bg-background border border-slate-200 dark:border-white/10 rounded-xl shadow-2xl max-h-60 overflow-y-auto backdrop-blur-xl animate-in fade-in slide-in-from-top-2 duration-200 overscroll-contain styled-scrollbar">
@@ -1207,12 +1213,12 @@ export default function Inventory() {
                      <div className="space-y-2">
                        <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Search Products</Label>
                        <div className="relative">
-                         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                          <Input
                            placeholder="Type product name or model..."
                            value={transferProductSearch}
                            onChange={(e) => setTransferProductSearch(e.target.value)}
-                           className="pl-10 h-10 bg-slate-50 dark:bg-[#0B0F19]/60 border-slate-200 dark:border-white/5 rounded-xl"
+                           className="pl-10 h-10 rounded-xl"
                          />
                        </div>
                        
@@ -1314,15 +1320,12 @@ export default function Inventory() {
         </div>
 
         <div className="flex flex-col gap-4 sm:flex-row">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder={activeTab === 'inventory' ? "Search products..." : "Search by customer or product..."}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10"
-            />
-          </div>
+          <SearchBar
+            value={search}
+            onChange={setSearch}
+            placeholder={activeTab === 'inventory' ? "Search products..." : "Search by customer or product..."}
+            className="flex-1"
+          />
           {activeTab === 'inventory' && (
             <Select value={stockFilter} onValueChange={(value) => setStockFilter(value as StockLevelFilter)}>
               <SelectTrigger className="w-full sm:w-[180px]">

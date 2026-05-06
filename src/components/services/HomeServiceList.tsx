@@ -1,5 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { AlertCircle, Battery, ChevronRight, MapPin, Phone, Zap } from 'lucide-react';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { formatDistanceToNow } from 'date-fns';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -175,10 +176,10 @@ export function HomeServiceList({ viewMode, onSelectRequest, refreshTrigger, ini
           ))}
         </div>
 
-        <Input
-          placeholder="Search by name, phone, request #..."
+        <SearchBar
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={setSearch}
+          placeholder="Search by name, phone, request #..."
           className="max-w-sm flex-1"
         />
       </div>

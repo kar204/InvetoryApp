@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Plus, Search, Filter, Download, Trash2, Phone, Battery, Zap, Wrench, ChevronRight, X, CheckCircle } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
+import { Plus, Filter, Download, Trash2, Phone, Battery, Zap, Wrench, ChevronRight, X, CheckCircle } from 'lucide-react';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -17,6 +18,7 @@ import { ServiceTicket, ServiceStatus, Profile, UserRole, HomeServiceRequest, Se
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { usePollingRefresh } from '@/hooks/usePollingRefresh';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { formatDistanceToNow } from 'date-fns';
 import { PrintTicket } from '@/components/PrintTicket';
 import { downloadCSV, formatTicketForExport } from '@/utils/exportUtils';
@@ -460,6 +462,7 @@ export default function Services() {
   const [spInvertorAgents, setSpInvertorAgents] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [homeSearch, setHomeSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -485,8 +488,13 @@ export default function Services() {
 
   // Close ticket state
   const [ticketToClose, setTicketToClose] = useState<ServiceTicket | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'UPI' | 'FOC' | ''>('');
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'UPI' | 'CREDIT' | 'FOC' | ''>('');
   const [closingNotes, setClosingNotes] = useState('');
+
+  // Battery buyback state
+  type BuybackMethod = 'NONE' | 'SALE' | 'AGED' | 'SCRAP';
+  const [batteryBuybackMethods, setBatteryBuybackMethods] = useState<Record<string, BuybackMethod>>({});
+  const [batteryBuybackPrices, setBatteryBuybackPrices] = useState<Record<string, string>>({});
 
   // Form state
   const [formData, setFormData] = useState({
@@ -606,7 +614,7 @@ export default function Services() {
 
       if (error) throw error;
 
-      const ticketsData = (data || []) as ServiceTicket[];
+      const ticketsData = (data || []) as unknown as ServiceTicket[];
       const ticketIds = ticketsData.map((ticket) => ticket.id);
       const itemsMap: Record<string, ServiceTicketItem[]> = {};
 
@@ -636,7 +644,7 @@ export default function Services() {
   };
 
   // Fallback polling (helps multi-user environments if realtime events are missed)
-  usePollingRefresh(fetchTickets, 30000);
+  usePollingRefresh(fetchTickets, 60000);
 
   const fetchProfiles = async () => {
     const { data } = await supabase.from('profiles').select('*');
@@ -777,7 +785,7 @@ export default function Services() {
       });
       setTicketItems([]);
 
-      setShowNewTicketPrint(ticket as ServiceTicket);
+      setShowNewTicketPrint(ticket as unknown as ServiceTicket);
       fetchTickets();
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
@@ -1077,6 +1085,44 @@ export default function Services() {
         user_id: user.id,
       });
 
+      // Create scrap entries for batteries with buyback
+      const batteryItems = getBatteryItems(ticketToClose);
+      const buybackScrapItems: Array<{ item: ServiceTicketItem; method: string; price: number }> = [];
+
+      for (const item of batteryItems) {
+        const method = batteryBuybackMethods[item.id];
+        if (!method || method === 'NONE') continue;
+
+        const isScrap = method === 'SCRAP';
+        const price = isScrap ? Number(batteryBuybackPrices[item.id] || 0) : 0;
+
+        buybackScrapItems.push({ item, method, price });
+
+        await supabase.from('scrap_entries').insert({
+          customer_name: ticketToClose.customer_name,
+          scrap_item: 'Car Battery',
+          scrap_model: item.model,
+          scrap_value: price,
+          status: 'IN',
+          recorded_by: user.id,
+          quantity: 1,
+          buyback_method: method,
+          service_ticket_id: ticketToClose.id,
+        });
+      }
+
+      if (buybackScrapItems.length > 0) {
+        const scrapSummary = buybackScrapItems
+          .map((b) => `${b.item.model} (${b.method}${b.method === 'SCRAP' ? ` ₹${b.price}` : ''})`)
+          .join(', ');
+
+        await supabase.from('service_logs').insert({
+          ticket_id: ticketToClose.id,
+          action: `Battery buyback recorded: ${scrapSummary}`,
+          user_id: user.id,
+        });
+      }
+
       // Get updated ticket with payment info for print
       const { data: updatedTicket } = await supabase
         .from('service_tickets')
@@ -1087,11 +1133,13 @@ export default function Services() {
       toast({ title: 'Ticket closed' });
 
       // Show print dialog with closed ticket
-      setShowClosedPrint(updatedTicket as ServiceTicket);
+      setShowClosedPrint(updatedTicket as unknown as ServiceTicket);
 
       setTicketToClose(null);
       setPaymentMethod('');
       setClosingNotes('');
+      setBatteryBuybackMethods({});
+      setBatteryBuybackPrices({});
       setSelectedTicket(null);
       fetchTickets();
     } catch (error: unknown) {
@@ -1123,13 +1171,14 @@ export default function Services() {
   const isServiceAgent = hasRole('service_agent');
   const canCloseTicket = isCounterStaff || isAdmin;
 
-  const filteredTickets = tickets.filter(ticket => {
+  const filteredTickets = useMemo(() => tickets.filter(ticket => {
     // First apply search filter
+    const q = debouncedSearch.toLowerCase();
     const matchesSearch =
-      ticket.customer_name.toLowerCase().includes(search.toLowerCase()) ||
-      ticket.battery_model.toLowerCase().includes(search.toLowerCase()) ||
-      (ticket.invertor_model && ticket.invertor_model.toLowerCase().includes(search.toLowerCase())) ||
-      (ticket.ticket_number && ticket.ticket_number.toLowerCase().includes(search.toLowerCase()));
+      ticket.customer_name.toLowerCase().includes(q) ||
+      ticket.battery_model.toLowerCase().includes(q) ||
+      (ticket.invertor_model && ticket.invertor_model.toLowerCase().includes(q)) ||
+      (ticket.ticket_number && ticket.ticket_number.toLowerCase().includes(q));
 
     if (!matchesSearch) return false;
 
@@ -1150,7 +1199,7 @@ export default function Services() {
     }
 
     return false;
-  });
+  }), [tickets, debouncedSearch, isAdmin, isCounterStaff, isServiceAgent, isSpBattery, isSpInvertor, user]);
 
   const getProfileName = (userId: string | null) => {
     if (!userId) return 'Unassigned';
@@ -1432,15 +1481,12 @@ export default function Services() {
             ))}
           </div>
 
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-600 dark:text-slate-400" />
-            <Input
-              placeholder="Search by customer, ticket ID, model..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10 rounded-xl bg-slate-50 dark:bg-[#0B0F19] border-slate-200 dark:border-white/10 text-slate-800 dark:text-slate-200 placeholder:text-slate-600 dark:text-slate-500 focus-visible:ring-[#4F8CFF]/50 h-11"
-            />
-          </div>
+          <SearchBar
+            value={search}
+            onChange={setSearch}
+            placeholder="Search by customer, ticket ID, model..."
+            className="flex-1 max-w-md"
+          />
         </div>
 
         {loading ? (
@@ -1821,6 +1867,8 @@ export default function Services() {
                         setSelectedTicket(null);
                         setTicketToClose(selectedTicket);
                         setPaymentMethod('');
+                        setBatteryBuybackMethods({});
+                        setBatteryBuybackPrices({});
                       }}
                     >
                       <CheckCircle className="h-5 w-5" />
@@ -1871,7 +1919,7 @@ export default function Services() {
                           <Label className="text-xs font-medium text-muted-foreground">Warranty Status</Label>
                           <RadioGroup
                             value={batteryItemWarranty[item.id] || ''}
-                            onValueChange={(val) => setBatteryItemWarranty({ ...batteryItemWarranty, [item.id]: val })}
+                            onValueChange={(val) => setBatteryItemWarranty({ ...batteryItemWarranty, [item.id]: val as 'yes' | 'no' })}
                             className="flex gap-4"
                           >
                             <div className="flex items-center space-x-1.5">
@@ -1974,7 +2022,7 @@ export default function Services() {
                           <Label className="text-xs font-medium text-muted-foreground">Issue Status</Label>
                           <RadioGroup
                             value={inverterItemResolved[item.id] || ''}
-                            onValueChange={(val) => setInverterItemResolved({ ...inverterItemResolved, [item.id]: val })}
+                            onValueChange={(val) => setInverterItemResolved({ ...inverterItemResolved, [item.id]: val as 'yes' | 'no' })}
                             className="flex gap-4"
                           >
                             <div className="flex items-center space-x-1.5">
@@ -2075,12 +2123,101 @@ export default function Services() {
                     <p className="text-sm text-muted-foreground">Inverter: Rs. {ticketToClose.invertor_price.toFixed(2)}</p>
                   )}
                 </div>
+                {/* Battery Buyback Section */}
+                {getBatteryItems(ticketToClose).length > 0 && (() => {
+                  const batteryItems = getBatteryItems(ticketToClose);
+                  const totalScrapPayout = batteryItems.reduce((sum, item) => {
+                    const method = batteryBuybackMethods[item.id];
+                    if (method === 'SCRAP') {
+                      return sum + Number(batteryBuybackPrices[item.id] || 0);
+                    }
+                    return sum;
+                  }, 0);
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Battery className="h-4 w-4 text-blue-500" />
+                        <Label className="text-sm font-medium">Battery Buyback</Label>
+                        <Badge variant="outline" className="text-xs">{batteryItems.length} battery</Badge>
+                      </div>
+                      <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                        {batteryItems.map((item, idx) => {
+                          const selectedMethod = batteryBuybackMethods[item.id] || 'NONE';
+                          return (
+                            <div key={item.id || idx} className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex-1 min-w-0">
+                                  <span className="text-sm font-semibold">{item.model}</span>
+                                  {item.issue_description && (
+                                    <p className="text-xs text-muted-foreground truncate">{item.issue_description}</p>
+                                  )}
+                                </div>
+                                <span className="text-xs text-muted-foreground ml-2">#{idx + 1}</span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {(['NONE', 'SALE', 'AGED', 'SCRAP'] as BuybackMethod[]).map((method) => (
+                                  <button
+                                    key={method}
+                                    type="button"
+                                    onClick={() => {
+                                      setBatteryBuybackMethods((prev) => ({ ...prev, [item.id]: method }));
+                                      if (method !== 'SCRAP') {
+                                        setBatteryBuybackPrices((prev) => {
+                                          const next = { ...prev };
+                                          delete next[item.id];
+                                          return next;
+                                        });
+                                      }
+                                    }}
+                                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all border ${
+                                      selectedMethod === method
+                                        ? method === 'SCRAP'
+                                          ? 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30'
+                                          : method === 'NONE'
+                                            ? 'bg-slate-200/50 text-slate-700 dark:bg-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600'
+                                            : 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30'
+                                        : 'bg-transparent text-slate-500 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                                    }`}
+                                  >
+                                    {method === 'NONE' ? 'None' : method === 'SALE' ? 'Sale' : method === 'AGED' ? 'Aged' : 'Scrap'}
+                                  </button>
+                                ))}
+                              </div>
+                              {selectedMethod === 'SCRAP' && (
+                                <div className="pt-1">
+                                  <Label className="text-xs font-medium text-muted-foreground">Scrap Value (₹) — Money OUT</Label>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={batteryBuybackPrices[item.id] || ''}
+                                    onChange={(e) => setBatteryBuybackPrices((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                                    placeholder="Enter scrap payout amount"
+                                    className="h-9 text-sm mt-1"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {totalScrapPayout > 0 && (
+                        <div className="flex justify-between items-center p-2.5 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800">
+                          <span className="text-xs font-medium text-red-600 dark:text-red-400">Total Scrap Payout (Money OUT)</span>
+                          <span className="text-sm font-bold text-red-600 dark:text-red-400">₹{totalScrapPayout.toLocaleString('en-IN')}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">Payment Method</Label>
                   <Select
                     value={paymentMethod}
                     onValueChange={(value) =>
-                      setPaymentMethod(value as 'CASH' | 'CARD' | 'UPI' | 'FOC')
+                      setPaymentMethod(value as 'CASH' | 'CARD' | 'UPI' | 'CREDIT' | 'FOC')
                     }
                   >
                     <SelectTrigger className="w-full h-11">
@@ -2090,6 +2227,7 @@ export default function Services() {
                       <SelectItem value="CASH">Cash</SelectItem>
                       <SelectItem value="CARD">Card</SelectItem>
                       <SelectItem value="UPI">UPI</SelectItem>
+                      <SelectItem value="CREDIT">Credit</SelectItem>
                       <SelectItem value="FOC">Free of Cost (FOC)</SelectItem>
                     </SelectContent>
                   </Select>
@@ -2104,24 +2242,26 @@ export default function Services() {
                     className="min-h-[100px] bg-white dark:bg-[#111827] border-slate-200 dark:border-white/5"
                   />
                 </div>
-                <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2">
-                  <Button type="button" variant="outline" onClick={() => {
-                    setTicketToClose(null);
-                    setClosingNotes('');
-                    setPaymentMethod('');
-                  }} className="w-full sm:w-auto">
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={!paymentMethod} className="w-full sm:w-auto gap-2">
-                    Confirm & Close
-                  </Button>
-                </div>
-                <div className="flex justify-center pt-2">
-                  <PrintTicket
-                    ticket={ticketToClose}
-                    profileName={getProfileName(ticketToClose.assigned_to_battery)}
-                    invertorProfileName={getProfileName(ticketToClose.assigned_to_invertor)}
-                  />
+                <div className="flex flex-col gap-3 pt-4 mt-2 border-t border-border">
+                  <div className="flex flex-col-reverse sm:flex-row justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => {
+                      setTicketToClose(null);
+                      setClosingNotes('');
+                      setPaymentMethod('');
+                    }} className="w-full sm:w-auto h-10">
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={!paymentMethod} className="w-full sm:w-auto h-10 gap-2">
+                      Confirm & Close
+                    </Button>
+                  </div>
+                  <div className="flex justify-center">
+                    <PrintTicket
+                      ticket={ticketToClose}
+                      profileName={getProfileName(ticketToClose.assigned_to_battery)}
+                      invertorProfileName={getProfileName(ticketToClose.assigned_to_invertor)}
+                    />
+                  </div>
                 </div>
               </form>
             )}

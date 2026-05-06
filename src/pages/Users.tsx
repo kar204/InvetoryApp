@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useState } from 'react';
-import { Plus, Search, Shield, UserCog, Trash2 } from 'lucide-react';
+import { Plus, Shield, UserCog, Trash2 } from 'lucide-react';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { AppLayout } from '@/components/layout/AppLayout';
 import {
   AlertDialog,
@@ -35,6 +36,8 @@ const allRoles: { value: AppRole; label: string; description: string }[] = [
   { value: 'service_technician', label: 'Service Technician', description: 'Field service - home/office visits' },
   { value: 'warehouse_staff', label: 'Warehouse Staff', description: 'Manage inventory stock' },
   { value: 'procurement_staff', label: 'Procurement Staff', description: 'Add products and manage procurement' },
+  { value: 'inventory_person', label: 'Inventory Person', description: 'Manage aged battery inventory flow' },
+  { value: 'seller', label: 'Seller', description: 'Sell and rent aged batteries' },
   { value: 'scrap_manager', label: 'Scrap Manager', description: 'View and manage scrap entries' },
 ];
 
@@ -47,6 +50,8 @@ const roleColors: Record<AppRole, string> = {
   service_technician: 'bg-blue-500/20 text-blue-600 border-blue-500/30',
   warehouse_staff: 'bg-chart-1/20 text-chart-1 border-chart-1/30',
   procurement_staff: 'bg-chart-4/20 text-chart-4 border-chart-4/30',
+  inventory_person: 'bg-cyan-500/20 text-cyan-600 border-cyan-500/30',
+  seller: 'bg-emerald-500/20 text-emerald-600 border-emerald-500/30',
   scrap_manager: 'bg-chart-3/20 text-chart-3 border-chart-3/30',
 };
 
@@ -362,15 +367,12 @@ export default function Users() {
           )}
         </div>
 
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search users..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="max-w-md pl-10"
-          />
-        </div>
+        <SearchBar
+          value={search}
+          onChange={setSearch}
+          placeholder="Search users..."
+          className="max-w-md"
+        />
 
         {loading ? (
           <div className="flex items-center justify-center py-12">

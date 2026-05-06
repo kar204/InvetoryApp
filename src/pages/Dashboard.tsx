@@ -310,7 +310,7 @@ export default function Dashboard() {
         categoryStock,
       });
 
-      setRecentTickets((ticketsRes.data as ServiceTicket[]) || []);
+      setRecentTickets((ticketsRes.data as unknown as ServiceTicket[]) || []);
       setLowStockItems(lowStock);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -364,7 +364,7 @@ export default function Dashboard() {
   }, [fetchSalesTrend, salesRange]);
 
   // Fallback polling (helps when realtime is delayed or client missed an event)
-  usePollingRefresh(fetchDashboardData, 30000);
+  usePollingRefresh(fetchDashboardData, 60000);
 
   const getGreeting = () => {
     const hour = new Date().getHours();

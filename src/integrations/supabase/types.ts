@@ -216,7 +216,7 @@ export type Database = {
           id: string
           inverter_resolution_notes: string | null
           inverter_resolved: boolean | null
-          payment_method: "CASH" | "CARD" | "UPI" | null
+          payment_method: "CASH" | "CARD" | "UPI" | "FOC" | null
           request_id: string
           resolved_at: string
           resolved_by: string
@@ -235,7 +235,7 @@ export type Database = {
           id?: string
           inverter_resolution_notes?: string | null
           inverter_resolved?: boolean | null
-          payment_method?: "CASH" | "CARD" | "UPI" | null
+          payment_method?: "CASH" | "CARD" | "UPI" | "FOC" | null
           request_id: string
           resolved_at: string
           resolved_by: string
@@ -254,7 +254,7 @@ export type Database = {
           id?: string
           inverter_resolution_notes?: string | null
           inverter_resolved?: boolean | null
-          payment_method?: "CASH" | "CARD" | "UPI" | null
+          payment_method?: "CASH" | "CARD" | "UPI" | "FOC" | null
           request_id?: string
           resolved_at?: string
           resolved_by?: string
@@ -456,6 +456,7 @@ export type Database = {
           battery_resolved: boolean | null
           battery_resolved_at: string | null
           battery_resolved_by: string | null
+          closing_notes: string | null
           created_at: string
           created_by: string
           customer_id: string | null
@@ -473,6 +474,7 @@ export type Database = {
           resolution_notes: string | null
           service_price: number | null
           status: Database["public"]["Enums"]["service_status"]
+          tally_ticket_number: string | null
           ticket_number: string | null
           updated_at: string
         }
@@ -486,6 +488,7 @@ export type Database = {
           battery_resolved?: boolean | null
           battery_resolved_at?: string | null
           battery_resolved_by?: string | null
+          closing_notes?: string | null
           created_at?: string
           created_by: string
           customer_id?: string | null
@@ -503,6 +506,7 @@ export type Database = {
           resolution_notes?: string | null
           service_price?: number | null
           status?: Database["public"]["Enums"]["service_status"]
+          tally_ticket_number?: string | null
           ticket_number?: string | null
           updated_at?: string
         }
@@ -516,6 +520,7 @@ export type Database = {
           battery_resolved?: boolean | null
           battery_resolved_at?: string | null
           battery_resolved_by?: string | null
+          closing_notes?: string | null
           created_at?: string
           created_by?: string
           customer_id?: string | null
@@ -533,6 +538,7 @@ export type Database = {
           resolution_notes?: string | null
           service_price?: number | null
           status?: Database["public"]["Enums"]["service_status"]
+          tally_ticket_number?: string | null
           ticket_number?: string | null
           updated_at?: string
         }
@@ -1142,6 +1148,8 @@ export type Database = {
         | "sp_battery"
         | "sp_invertor"
         | "scrap_manager"
+        | "inventory_person"
+        | "seller"
       service_status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED"
       stock_source: "SUPPLIER" | "WAREHOUSE"
       transaction_type: "IN" | "OUT"
@@ -1278,9 +1286,12 @@ export const Constants = {
         "service_agent",
         "warehouse_staff",
         "procurement_staff",
+        "service_technician",
         "sp_battery",
         "sp_invertor",
         "scrap_manager",
+        "inventory_person",
+        "seller",
       ],
       service_status: ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"],
       stock_source: ["SUPPLIER", "WAREHOUSE"],

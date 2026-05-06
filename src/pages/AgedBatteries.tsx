@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Search, Battery, ScanBarcode, CheckCircle2, XCircle, ShoppingCart, Trash2, RotateCcw, Calendar, Loader2, Camera, X, RefreshCw } from 'lucide-react';
+import { Battery, ScanBarcode, CheckCircle2, XCircle, ShoppingCart, Trash2, RotateCcw, Calendar, Loader2, Camera, X, RefreshCw } from 'lucide-react';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
@@ -57,9 +58,41 @@ interface AgedBatteryRental {
   customer?: Customer;
 }
 
+type ScrapEntryIdRow = { id: string };
+
+type ScrapLedgerPayload = {
+  customer_name: string;
+  scrap_item: string;
+  scrap_model: string;
+  scrap_value: number;
+  quantity: number;
+  aged_battery_id: string;
+  recorded_by?: string;
+};
+
+type ScrapEntriesTable = {
+  select: (columns: 'id') => {
+    eq: (column: 'aged_battery_id', value: string) => {
+      order: (column: 'created_at', options: { ascending: boolean }) => {
+        limit: (count: number) => PromiseLike<{ data: ScrapEntryIdRow[] | null; error: unknown }>;
+      };
+    };
+  };
+  update: (payload: Omit<ScrapLedgerPayload, 'recorded_by'>) => {
+    eq: (column: 'id', value: string) => PromiseLike<{ error: unknown }>;
+  };
+  insert: (payload: ScrapLedgerPayload) => PromiseLike<{ error: unknown }>;
+};
+
+type RpcError = {
+  message?: string;
+  details?: string;
+  hint?: string;
+} | null;
+
 interface RpcResult<T = unknown> {
   data: T | null;
-  error: unknown;
+  error: RpcError;
 }
 
 const STATUS_COLORS: Record<AgedBatteryStatus, { bg: string; text: string; label: string }> = {
@@ -238,7 +271,7 @@ export default function AgedBatteries() {
     };
   }, [fetchData]);
 
-  usePollingRefresh(fetchData, 30000);
+  usePollingRefresh(fetchData, 60000);
 
   const filteredBatteries = agedBatteries.filter(battery => {
     if (!search.trim()) return true;
@@ -277,11 +310,11 @@ export default function AgedBatteries() {
   };
 
   const retryRpc = async <T,>(
-    fn: () => Promise<RpcResult<T>>,
+    fn: () => PromiseLike<RpcResult<T>>,
     retries = 3,
     delay = 1000
   ): Promise<RpcResult<T>> => {
-    let lastError: unknown = null;
+    let lastError: RpcError = null;
     
     for (let i = 0; i < retries; i++) {
       try {
@@ -294,12 +327,17 @@ export default function AgedBatteries() {
           await new Promise(r => setTimeout(r, delay * (i + 1)));
         }
       } catch (err) {
-        lastError = err;
-        return { data: null, error: err };
+        lastError = err instanceof Error ? { message: err.message } : { message: 'Unknown RPC error' };
+        return { data: null, error: lastError };
       }
     }
     
     return { data: null, error: lastError };
+  };
+
+  const getRpcErrorMessage = (error: RpcError) => {
+    if (!error) return 'Unknown RPC error';
+    return error.message || error.details || error.hint || JSON.stringify(error);
   };
 
   const processBarcode = (rawInput: string) => {
@@ -535,7 +573,7 @@ export default function AgedBatteries() {
 
           if (error) {
             results.failed++;
-            const errorMsg = error.message || error.details || error.hint || JSON.stringify(error);
+            const errorMsg = getRpcErrorMessage(error);
             results.errors.push(`${item.barcode}: ${errorMsg}`);
             toast({ title: `Failed: ${item.barcode}`, description: errorMsg, variant: 'destructive' });
           } else {
@@ -784,6 +822,7 @@ export default function AgedBatteries() {
       throw new Error('Missing user for scrap ledger sync');
     }
 
+    const scrapEntriesTable = () => supabase.from('scrap_entries') as unknown as ScrapEntriesTable;
     const customerName = battery.customer?.name?.trim() || 'Aged Battery Inventory';
     const basePayload = {
       customer_name: customerName,
@@ -794,8 +833,7 @@ export default function AgedBatteries() {
       aged_battery_id: battery.id,
     };
 
-    const { data: existingEntries, error: existingError } = await supabase
-      .from('scrap_entries')
+    const { data: existingEntries, error: existingError } = await scrapEntriesTable()
       .select('id')
       .eq('aged_battery_id', battery.id)
       .order('created_at', { ascending: false })
@@ -808,8 +846,7 @@ export default function AgedBatteries() {
     const existingEntryId = existingEntries?.[0]?.id;
 
     if (existingEntryId) {
-      const { error: updateError } = await supabase
-        .from('scrap_entries')
+      const { error: updateError } = await scrapEntriesTable()
         .update(basePayload)
         .eq('id', existingEntryId);
 
@@ -820,8 +857,7 @@ export default function AgedBatteries() {
       return;
     }
 
-    const { error: insertError } = await supabase
-      .from('scrap_entries')
+    const { error: insertError } = await scrapEntriesTable()
       .insert({
         ...basePayload,
         recorded_by: user.id,
@@ -1010,15 +1046,12 @@ export default function AgedBatteries() {
 
           <TabsContent value="inventory" className="space-y-4">
             <div className="flex items-center gap-4">
-              <div className="relative flex-1 max-w-sm">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search by serial, product, customer, or phone..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-8"
-                />
-              </div>
+              <SearchBar
+                value={search}
+                onChange={setSearch}
+                placeholder="Search by serial, product, customer, or phone..."
+                className="flex-1 max-w-sm"
+              />
             </div>
 
             <div className="rounded-xl border bg-white dark:bg-[#111827]/80 backdrop-blur-xl overflow-hidden">

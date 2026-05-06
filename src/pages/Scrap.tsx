@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Search, Recycle, PackageOpen, Check, TrendingUp, TrendingDown, Trash2, Plus, X, Download } from 'lucide-react';
+import { Recycle, PackageOpen, Check, TrendingUp, TrendingDown, Trash2, Plus, X, Download } from 'lucide-react';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -487,10 +488,7 @@ export default function Scrap() {
         </div>
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input placeholder="Search scrap entries..." value={search} onChange={e => setSearch(e.target.value)} className="pl-10 w-full" />
-          </div>
+          <SearchBar value={search} onChange={setSearch} placeholder="Search scrap entries..." className="flex-1 max-w-md" />
           <Button 
             variant="outline" 
             className="gap-2 h-10"
