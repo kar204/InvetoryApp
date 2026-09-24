@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Filter, Download, Trash2, Phone, Battery, Zap, Wrench, ChevronRight, X, CheckCircle } from 'lucide-react';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -470,6 +470,21 @@ export default function Services() {
   const [ticketToDelete, setTicketToDelete] = useState<ServiceTicket | null>(null);
   const [homeServiceRefreshTrigger, setHomeServiceRefreshTrigger] = useState(0);
   const [activeTab, setActiveTab] = useState<'in-shop' | 'home-service'>(isServiceTechnician ? 'home-service' : 'in-shop');
+  const [ticketPage, setTicketPage] = useState(0);
+  const [hasNextTicketPage, setHasNextTicketPage] = useState(false);
+  const ticketPageSize = 50;
+
+  // Keep the query role-aware as well as the UI. Loading every ticket and then
+  // hiding most of them was especially expensive on mobile connections.
+  const canCreateTicket = hasAnyRole(['admin', 'counter_staff']);
+  const canAssignTicket = hasAnyRole(['admin', 'counter_staff']);
+  const canDeleteTicket = hasRole('admin');
+  const isAdmin = hasRole('admin');
+  const isSpBattery = hasRole('sp_battery');
+  const isSpInvertor = hasRole('sp_invertor');
+  const isCounterStaff = hasRole('counter_staff');
+  const isServiceAgent = hasRole('service_agent');
+  const canCloseTicket = isCounterStaff || isAdmin;
 
   // Battery resolution state
   const [ticketToResolveBattery, setTicketToResolveBattery] = useState<ServiceTicket | null>(null);
@@ -553,18 +568,54 @@ export default function Services() {
   const getTicketItemsTotal = (ticket?: ServiceTicket | null) => getTicketItems(ticket).reduce((sum, item) => sum + (item.price || 0), 0);
   const formatCurrency = (amount: number) => `Rs. ${amount.toLocaleString('en-IN')}`;
 
+  // Older tickets predate service_ticket_items. Materialise their legacy model
+  // fields before opening an item-based resolution form, so they remain usable.
+  const materializeLegacyItems = async (ticket: ServiceTicket): Promise<ServiceTicket> => {
+    const { data: existingItems, error: existingItemsError } = await supabase
+      .from('service_ticket_items')
+      .select('*')
+      .eq('ticket_id', ticket.id);
+
+    if (existingItemsError) throw existingItemsError;
+
+    const items = (existingItems || []) as ServiceTicketItem[];
+    const missingItems: ServiceTicketItemInsert[] = [];
+    const hasBattery = items.some((item) => item.item_type === 'BATTERY');
+    const hasInverter = items.some((item) => item.item_type === 'INVERTER');
+
+    if (!hasBattery && ticket.battery_model && ticket.battery_model !== '-') {
+      missingItems.push({
+        ticket_id: ticket.id,
+        item_type: 'BATTERY',
+        model: ticket.battery_model,
+        issue_description: ticket.issue_description || null,
+        product_id: null,
+      });
+    }
+    if (!hasInverter && ticket.invertor_model?.trim()) {
+      missingItems.push({
+        ticket_id: ticket.id,
+        item_type: 'INVERTER',
+        model: ticket.invertor_model,
+        issue_description: ticket.issue_description || null,
+        product_id: null,
+      });
+    }
+
+    if (missingItems.length === 0) return { ...ticket, items };
+
+    const { data: insertedItems, error: insertItemsError } = await supabase
+      .from('service_ticket_items')
+      .insert(missingItems)
+      .select('*');
+    if (insertItemsError) throw insertItemsError;
+
+    return { ...ticket, items: [...items, ...((insertedItems || []) as ServiceTicketItem[])] };
+  };
+
   useEffect(() => {
-    fetchTickets();
     fetchProfiles();
     fetchServiceAgents();
-
-    const ticketsChannel = supabase
-      .channel('service-tickets-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_tickets' }, () => {
-        fetchTickets();
-      })
-      .subscribe();
-
     const rolesChannel = supabase
       .channel('user-roles-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_roles' }, () => {
@@ -573,11 +624,27 @@ export default function Services() {
       .subscribe();
 
     return () => {
-      ticketsChannel.unsubscribe();
       rolesChannel.unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter]);
+  }, []);
+
+  useEffect(() => {
+    fetchTickets();
+    const ticketsChannel = supabase
+      .channel(`service-tickets-realtime-${user?.id || 'anon'}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_tickets' }, () => {
+        fetchTickets(false);
+      })
+      .subscribe();
+
+    return () => ticketsChannel.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, debouncedSearch, ticketPage, user?.id, isAdmin, isCounterStaff, isServiceAgent, isSpBattery, isSpInvertor]);
+
+  useEffect(() => {
+    setTicketPage(0);
+  }, [statusFilter, debouncedSearch]);
 
   // Deep-link support: /services?tab=in-shop&q=... or /services?tab=home-service&q=...
   useEffect(() => {
@@ -599,8 +666,9 @@ export default function Services() {
     if (action === 'create') setIsCreateOpen(true);
   }, [location.search, isServiceTechnician]);
 
-  const fetchTickets = async () => {
+  const fetchTickets = async (showLoading = true) => {
     try {
+      if (showLoading) setLoading(true);
       let query = supabase
         .from('service_tickets')
         .select('*')
@@ -610,24 +678,58 @@ export default function Services() {
         query = query.eq('status', statusFilter as ServiceStatus);
       }
 
-      const { data, error } = await query;
+      const normalizedSearch = debouncedSearch.trim().replace(/[,%()]/g, '');
+      if (normalizedSearch) {
+        const term = `%${normalizedSearch}%`;
+        query = query.or(`customer_name.ilike.${term},customer_phone.ilike.${term},ticket_number.ilike.${term},battery_model.ilike.${term},invertor_model.ilike.${term}`);
+      }
+
+      if (!isAdmin && !isCounterStaff && !isServiceAgent) {
+        if (isSpBattery && user?.id) query = query.eq('assigned_to_battery', user.id);
+        else if (isSpInvertor && user?.id) query = query.eq('assigned_to_invertor', user.id);
+        else {
+          setTickets([]);
+          setHasNextTicketPage(false);
+          return;
+        }
+      }
+
+      // Request one additional row to know whether Next is available without
+      // an expensive COUNT(*) on every mobile refresh.
+      const pageStart = ticketPage * ticketPageSize;
+      const { data, error } = await query.range(pageStart, pageStart + ticketPageSize);
 
       if (error) throw error;
 
-      const ticketsData = (data || []) as unknown as ServiceTicket[];
+      const pageRows = (data || []) as unknown as ServiceTicket[];
+      setHasNextTicketPage(pageRows.length > ticketPageSize);
+      const ticketsData = pageRows.slice(0, ticketPageSize);
       const ticketIds = ticketsData.map((ticket) => ticket.id);
       const itemsMap: Record<string, ServiceTicketItem[]> = {};
 
       if (ticketIds.length > 0) {
-        const { data: items } = await supabase
-          .from('service_ticket_items')
-          .select('*')
-          .in('ticket_id', ticketIds);
+        // The visible page normally needs one request; retain chunking for a
+        // future page-size increase, but fetch chunks concurrently.
+        const chunkSize = 100;
+        const itemRequests = [];
+        for (let i = 0; i < ticketIds.length; i += chunkSize) {
+          itemRequests.push(supabase
+            .from('service_ticket_items')
+            .select('*')
+            .in('ticket_id', ticketIds.slice(i, i + chunkSize)));
+        }
+        const itemResults = await Promise.all(itemRequests);
 
-        ((items || []) as ServiceTicketItem[]).forEach((item) => {
-          if (!itemsMap[item.ticket_id]) itemsMap[item.ticket_id] = [];
-          itemsMap[item.ticket_id].push(item);
-        });
+        for (const { data: items, error: itemsError } of itemResults) {
+          if (itemsError) {
+            throw itemsError;
+          }
+
+          ((items || []) as ServiceTicketItem[]).forEach((item) => {
+            if (!itemsMap[item.ticket_id]) itemsMap[item.ticket_id] = [];
+            itemsMap[item.ticket_id].push(item);
+          });
+        }
       }
 
       const ticketsWithItems = ticketsData.map((ticket) => ({
@@ -644,7 +746,7 @@ export default function Services() {
   };
 
   // Fallback polling (helps multi-user environments if realtime events are missed)
-  usePollingRefresh(fetchTickets, 60000);
+  usePollingRefresh(() => fetchTickets(false), 60000);
 
   const fetchProfiles = async () => {
     const { data } = await supabase.from('profiles').select('*');
@@ -901,7 +1003,7 @@ export default function Services() {
         const isWarranty = batteryItemWarranty[item.id] === 'yes';
         const price = isWarranty ? 0 : Number(batteryItemPrices[item.id] || 0);
 
-        await supabase
+        const { error: itemError } = await supabase
           .from('service_ticket_items')
           .update({
             resolved: true,
@@ -911,6 +1013,7 @@ export default function Services() {
             resolved_at: new Date().toISOString(),
           })
           .eq('id', item.id);
+        if (itemError) throw itemError;
       }
 
       // Calculate total battery price from items
@@ -925,6 +1028,7 @@ export default function Services() {
         .select('resolved')
         .eq('ticket_id', ticketToResolveBattery.id);
       
+      if (allItems.error) throw allItems.error;
       const allResolved = ((allItems.data || []) as Array<Pick<ServiceTicketItem, 'resolved'>>).every((item) => item.resolved);
 
       const updateData: Record<string, unknown> = {
@@ -939,16 +1043,18 @@ export default function Services() {
         updateData.status = 'RESOLVED';
       }
 
-      await supabase
+      const { error: ticketError } = await supabase
         .from('service_tickets')
         .update(updateData)
         .eq('id', ticketToResolveBattery.id);
+      if (ticketError) throw ticketError;
 
-      await supabase.from('service_logs').insert({
+      const { error: logError } = await supabase.from('service_logs').insert({
         ticket_id: ticketToResolveBattery.id,
         action: `Battery resolved (${batteryItems.length} items) - Total: ${formatCurrency(totalBatteryPrice)}`,
         user_id: user.id,
       });
+      if (logError) throw logError;
 
       toast({ title: 'Battery resolution saved' });
       setTicketToResolveBattery(null);
@@ -998,7 +1104,7 @@ export default function Services() {
         const isResolved = inverterItemResolved[item.id] === 'yes';
         const price = isResolved ? Number(inverterItemPrices[item.id] || 0) : 0;
 
-        await supabase
+        const { error: itemError } = await supabase
           .from('service_ticket_items')
           .update({
             resolved: isResolved,
@@ -1008,6 +1114,7 @@ export default function Services() {
             resolved_at: new Date().toISOString(),
           })
           .eq('id', item.id);
+        if (itemError) throw itemError;
       }
 
       // Calculate total inverter price from items
@@ -1022,6 +1129,7 @@ export default function Services() {
         .select('resolved')
         .eq('ticket_id', ticketToResolveInvertor.id);
       
+      if (allItems.error) throw allItems.error;
       const allResolved = ((allItems.data || []) as Array<Pick<ServiceTicketItem, 'resolved'>>).every((item) => item.resolved);
 
       const updateData: Record<string, unknown> = {
@@ -1037,17 +1145,19 @@ export default function Services() {
         updateData.status = 'RESOLVED';
       }
 
-      await supabase
+      const { error: ticketError } = await supabase
         .from('service_tickets')
         .update(updateData)
         .eq('id', ticketToResolveInvertor.id);
+      if (ticketError) throw ticketError;
 
-      await supabase.from('service_logs').insert({
+      const { error: logError } = await supabase.from('service_logs').insert({
         ticket_id: ticketToResolveInvertor.id,
         action: `Inverter resolved (${inverterItems.length} items) - Total: ${formatCurrency(totalInverterPrice)}`,
         notes: invertorIssueDescription || null,
         user_id: user.id,
       });
+      if (logError) throw logError;
 
       toast({ title: 'Inverter resolution saved' });
       setTicketToResolveInvertor(null);
@@ -1160,46 +1270,9 @@ export default function Services() {
   downloadCSV(data, `service-tickets-${new Date().toISOString().split('T')[0]}`);
   };
 
-  // Role-based access checks (must be before filteredTickets)
-  const canCreateTicket = hasAnyRole(['admin', 'counter_staff']);
-  const canAssignTicket = hasAnyRole(['admin', 'counter_staff']);
-  const canDeleteTicket = hasRole('admin');
-  const isAdmin = hasRole('admin');
-  const isSpBattery = hasRole('sp_battery');
-  const isSpInvertor = hasRole('sp_invertor');
-  const isCounterStaff = hasRole('counter_staff');
-  const isServiceAgent = hasRole('service_agent');
-  const canCloseTicket = isCounterStaff || isAdmin;
-
-  const filteredTickets = useMemo(() => tickets.filter(ticket => {
-    // First apply search filter
-    const q = debouncedSearch.toLowerCase();
-    const matchesSearch =
-      ticket.customer_name.toLowerCase().includes(q) ||
-      ticket.battery_model.toLowerCase().includes(q) ||
-      (ticket.invertor_model && ticket.invertor_model.toLowerCase().includes(q)) ||
-      (ticket.ticket_number && ticket.ticket_number.toLowerCase().includes(q));
-
-    if (!matchesSearch) return false;
-
-    // Role-based filtering
-    if (isAdmin || isCounterStaff || isServiceAgent) {
-      // Admin, counter_staff, and service_agent see all tickets
-      return true;
-    }
-
-    if (isSpBattery) {
-      // sp_battery only sees tickets with battery component assigned to them AND that actually have a battery
-      return ticket.assigned_to_battery === user?.id && ticket.battery_model !== '-' && ticket.battery_model !== null;
-    }
-
-    if (isSpInvertor) {
-      // sp_invertor only sees tickets with invertor component assigned to them AND that actually have an invertor
-      return ticket.assigned_to_invertor === user?.id && ticket.invertor_model !== null && ticket.invertor_model !== '';
-    }
-
-    return false;
-  }), [tickets, debouncedSearch, isAdmin, isCounterStaff, isServiceAgent, isSpBattery, isSpInvertor, user]);
+  // Search, status, and role visibility are applied in fetchTickets before the
+  // page reaches the browser. Keeping this alias avoids changing any UI flow.
+  const filteredTickets = tickets;
 
   const getProfileName = (userId: string | null) => {
     if (!userId) return 'Unassigned';
@@ -1503,6 +1576,7 @@ export default function Services() {
             <p className="max-w-sm text-slate-600 dark:text-slate-400">There are no service tickets matching your criteria right now.</p>
           </div>
         ) : (
+          <>
           <div className="grid gap-4 animate-in slide-in-from-bottom-4 duration-500">
             <style>{`
               @keyframes slideInUp {
@@ -1630,6 +1704,32 @@ export default function Services() {
               </div>
             ))}
           </div>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-white/5 dark:bg-[#111827]/60">
+            <span className="text-sm text-slate-600 dark:text-slate-400">
+              Page {ticketPage + 1} · {filteredTickets.length} ticket{filteredTickets.length === 1 ? '' : 's'} loaded
+            </span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={ticketPage === 0 || loading}
+                onClick={() => setTicketPage((page) => Math.max(0, page - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!hasNextTicketPage || loading}
+                onClick={() => setTicketPage((page) => page + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+          </>
         )}
 
         {/* Ticket Detail Dialog */}
@@ -1804,16 +1904,19 @@ export default function Services() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {canResolveBattery(selectedTicket) && !selectedTicket.battery_resolved && (
                           <Button 
-                            className="h-10 gap-2 bg-blue-600 hover:bg-blue-700"
-                            onClick={() => {
-                              const ticket = selectedTicket;
-                              setSelectedTicket(null);
-                              setTimeout(() => {
+                            type="button"
+                            className="min-h-12 gap-2 bg-blue-600 hover:bg-blue-700 touch-manipulation"
+                            onClick={() => { void (async () => {
+                              try {
+                                const ticket = await materializeLegacyItems(selectedTicket);
+                                setSelectedTicket(null);
                                 setTicketToResolveBattery(ticket);
                                 setBatteryRechargeable('');
                                 setBatteryPrice('');
-                              }, 100);
-                            }}
+                              } catch (error: unknown) {
+                                toast({ title: 'Unable to load battery items', description: error instanceof Error ? error.message : 'An unknown error occurred', variant: 'destructive' });
+                              }
+                            })(); }}
                           >
                             <Battery className="h-4 w-4" />
                             Resolve Batteries
@@ -1822,17 +1925,20 @@ export default function Services() {
 
                         {canResolveInvertor(selectedTicket) && !selectedTicket.invertor_resolved && (
                           <Button 
-                            className="h-10 gap-2 bg-amber-600 hover:bg-amber-700"
-                            onClick={() => {
-                              const ticket = selectedTicket;
-                              setSelectedTicket(null);
-                              setTimeout(() => {
+                            type="button"
+                            className="min-h-12 gap-2 bg-amber-600 hover:bg-amber-700 touch-manipulation"
+                            onClick={() => { void (async () => {
+                              try {
+                                const ticket = await materializeLegacyItems(selectedTicket);
+                                setSelectedTicket(null);
                                 setTicketToResolveInvertor(ticket);
                                 setInvertorResolved('');
                                 setInvertorIssueDescription('');
                                 setInvertorPrice('');
-                              }, 100);
-                            }}
+                              } catch (error: unknown) {
+                                toast({ title: 'Unable to load inverter items', description: error instanceof Error ? error.message : 'An unknown error occurred', variant: 'destructive' });
+                              }
+                            })(); }}
                           >
                             <Zap className="h-4 w-4" />
                             Resolve Inverters
@@ -1883,7 +1989,7 @@ export default function Services() {
 
         {/* Battery Resolution Dialog */}
         <Dialog open={!!ticketToResolveBattery} onOpenChange={() => { setTicketToResolveBattery(null); }}>
-          <DialogContent className="max-h-[80vh] overflow-y-auto">
+          <DialogContent className="w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto overscroll-contain p-4 [-webkit-overflow-scrolling:touch] sm:max-w-lg sm:p-6">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Battery className="h-5 w-5 text-blue-500" />
@@ -1972,11 +2078,11 @@ export default function Services() {
                 </div>
               </div>
 
-              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2 border-t">
+              <div className="sticky bottom-0 z-10 -mx-4 flex flex-col-reverse justify-end gap-2 border-t bg-card px-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-3 sm:static sm:mx-0 sm:flex-row sm:bg-transparent sm:p-0 sm:pt-2">
                 <Button type="button" variant="outline" onClick={() => { setTicketToResolveBattery(null); setBatteryItemPrices({}); setBatteryItemWarranty({}); }} className="w-full sm:w-auto h-10">
                   Cancel
                 </Button>
-                <Button type="submit" className="w-full sm:w-auto h-10 gap-2 bg-blue-600 hover:bg-blue-700">
+                <Button type="submit" className="min-h-12 w-full touch-manipulation gap-2 bg-blue-600 hover:bg-blue-700 sm:h-10 sm:min-h-0 sm:w-auto">
                   <Battery className="h-4 w-4" />
                   Resolve {getBatteryItems(ticketToResolveBattery).length} Battery(s)
                 </Button>
@@ -1987,7 +2093,7 @@ export default function Services() {
 
         {/* Invertor Resolution Dialog */}
         <Dialog open={!!ticketToResolveInvertor} onOpenChange={() => setTicketToResolveInvertor(null)}>
-          <DialogContent className="max-h-[80vh] overflow-y-auto">
+          <DialogContent className="w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto overscroll-contain p-4 [-webkit-overflow-scrolling:touch] sm:max-w-lg sm:p-6">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Zap className="h-5 w-5 text-amber-500" />
@@ -2087,11 +2193,11 @@ export default function Services() {
                 />
               </div>
 
-              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2 border-t">
+              <div className="sticky bottom-0 z-10 -mx-4 flex flex-col-reverse justify-end gap-2 border-t bg-card px-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-3 sm:static sm:mx-0 sm:flex-row sm:bg-transparent sm:p-0 sm:pt-2">
                 <Button type="button" variant="outline" onClick={() => { setTicketToResolveInvertor(null); setInverterItemPrices({}); setInverterItemResolved({}); }} className="w-full sm:w-auto h-10">
                   Cancel
                 </Button>
-                <Button type="submit" className="w-full sm:w-auto h-10 gap-2 bg-amber-600 hover:bg-amber-700">
+                <Button type="submit" className="min-h-12 w-full touch-manipulation gap-2 bg-amber-600 hover:bg-amber-700 sm:h-10 sm:min-h-0 sm:w-auto">
                   <Zap className="h-4 w-4" />
                   Resolve {getInverterItems(ticketToResolveInvertor).length} Inverter(s)
                 </Button>

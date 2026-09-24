@@ -145,6 +145,11 @@ export function HomeServiceResolutionForm({
     e.preventDefault();
     if (!request || !user) return;
 
+    if (items.length === 0) {
+      toast({ title: 'No service items found', description: 'Add a battery or inverter item before resolving this request.', variant: 'destructive' });
+      return;
+    }
+
     // Validate battery items
     for (const item of batteryItems) {
       if (!batteryItemResolved[item.id]) {
@@ -183,40 +188,69 @@ export function HomeServiceResolutionForm({
     setLoading(true);
 
     try {
-      // Update each battery item
-      for (const item of batteryItems) {
-        const isResolved = batteryItemResolved[item.id] === 'yes';
-        const isWarranty = batteryItemWarranty[item.id] === 'yes';
-        const price = isWarranty ? 0 : Number(batteryItemPrices[item.id] || 0);
+      // Legacy requests may have only battery_model/inverter_model. Persist the
+      // displayed fallback items first, so every subsequent update targets a
+      // real row rather than a synthetic client-only id.
+      const persistedItems: Array<{ row: HomeServiceItem; formItemId: string }> = [];
+      for (const item of items) {
+        if (!item.id.endsWith('-legacy')) {
+          persistedItems.push({ row: item, formItemId: item.id });
+          continue;
+        }
 
-        await supabase
+        const { data: createdItem, error: createItemError } = await supabase
+          .from('home_service_items')
+          .insert({
+            request_id: request.id,
+            item_type: item.item_type,
+            model: item.model,
+            issue_description: item.issue_description,
+          })
+          .select('*')
+          .single();
+        if (createItemError) throw createItemError;
+        persistedItems.push({ row: createdItem as HomeServiceItem, formItemId: item.id });
+      }
+
+      const persistedBatteryItems = persistedItems.filter(({ row }) => row.item_type === 'BATTERY');
+      const persistedInverterItems = persistedItems.filter(({ row }) => row.item_type === 'INVERTER');
+
+      // Update each battery item
+      for (const { row: item, formItemId } of persistedBatteryItems) {
+        const isResolved = batteryItemResolved[formItemId] === 'yes';
+        const isWarranty = batteryItemWarranty[formItemId] === 'yes';
+        const price = isWarranty ? 0 : Number(batteryItemPrices[formItemId] || 0);
+
+        const { error: itemError } = await supabase
           .from('home_service_items')
           .update({
             resolved: isResolved,
             price: price,
             within_warranty: isResolved ? isWarranty : null,
-            notes: batteryItemNotes[item.id] || null,
+            notes: batteryItemNotes[formItemId] || null,
             resolved_by: user.id,
             resolved_at: new Date().toISOString(),
           })
           .eq('id', item.id);
+        if (itemError) throw itemError;
       }
 
       // Update each inverter item
-      for (const item of inverterItems) {
-        const isResolved = inverterItemResolved[item.id] === 'yes';
-        const price = isResolved ? Number(inverterItemPrices[item.id] || 0) : 0;
+      for (const { row: item, formItemId } of persistedInverterItems) {
+        const isResolved = inverterItemResolved[formItemId] === 'yes';
+        const price = isResolved ? Number(inverterItemPrices[formItemId] || 0) : 0;
 
-        await supabase
+        const { error: itemError } = await supabase
           .from('home_service_items')
           .update({
             resolved: isResolved,
             price: price,
-            notes: inverterItemNotes[item.id] || null,
+            notes: inverterItemNotes[formItemId] || null,
             resolved_by: user.id,
             resolved_at: new Date().toISOString(),
           })
           .eq('id', item.id);
+        if (itemError) throw itemError;
       }
 
       // Check if all items resolved
@@ -240,9 +274,9 @@ export function HomeServiceResolutionForm({
       console.log('Saving notes - Battery:', batteryNotes, 'Inverter:', inverterNotes);
 
       // Create resolution record
-      await supabase
+      const { error: resolutionError } = await supabase
         .from('home_service_resolutions')
-        .insert({
+        .upsert({
           request_id: request.id,
           battery_resolved: batteryItems.length > 0 ? batteryItems.every(i => batteryItemResolved[i.id] === 'yes') : null,
           battery_resolution_notes: batteryNotes,
@@ -257,13 +291,8 @@ export function HomeServiceResolutionForm({
           resolved_at: new Date().toISOString(),
           closed_by: user.id,
           closed_at: new Date().toISOString(),
-        });
-
-      // Update request status
-      await supabase
-        .from('home_service_requests')
-        .update({ status: allResolved ? 'CLOSED' : 'IN_PROGRESS' })
-        .eq('id', request.id);
+        }, { onConflict: 'request_id' });
+      if (resolutionError) throw resolutionError;
 
       toast({ title: 'Success', description: 'Service resolved successfully' });
       onClose();
@@ -280,7 +309,7 @@ export function HomeServiceResolutionForm({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto overscroll-contain p-4 [-webkit-overflow-scrolling:touch] sm:max-w-xl sm:p-6">
         <DialogHeader className="sticky top-0 bg-white dark:bg-[#0B0F19] pb-2 z-10 border-b">
           <DialogTitle className="text-lg sm:text-xl flex items-center gap-2">
             Resolve Home Service
@@ -538,12 +567,12 @@ export function HomeServiceResolutionForm({
           )}
 
           {/* Action Buttons */}
-          <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2 border-t">
+          <div className="sticky bottom-0 z-10 -mx-4 flex flex-col-reverse justify-end gap-2 border-t bg-card px-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-3 sm:static sm:mx-0 sm:flex-row sm:bg-transparent sm:p-0 sm:pt-2">
             <Button type="button" variant="outline" onClick={onClose} disabled={loading} className="w-full sm:w-auto h-10">
               <X className="w-4 h-4 mr-2" />
               Cancel
             </Button>
-            <Button type="submit" disabled={loading} className="w-full sm:w-auto h-10 gap-2 bg-emerald-600 hover:bg-emerald-700">
+            <Button type="submit" disabled={loading} className="min-h-12 w-full touch-manipulation gap-2 bg-emerald-600 hover:bg-emerald-700 sm:h-10 sm:min-h-0 sm:w-auto">
               {loading && <Loader className="w-4 h-4 animate-spin" />}
               Resolve {items.length} Item(s)
             </Button>

@@ -95,6 +95,11 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
       return;
     }
 
+    if (serviceItems.some((item) => !item.model.trim())) {
+      toast({ title: 'Validation Error', description: 'Select a model for every service item.', variant: 'destructive' });
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -177,12 +182,13 @@ export function HomeServiceForm({ onRequestCreated }: HomeServiceFormProps) {
       for (const item of serviceItems) {
         const qty = Math.max(1, item.quantity || 1);
         for (let i = 0; i < qty; i++) {
-          await supabase.from('home_service_items').insert({
+          const { error: itemError } = await supabase.from('home_service_items').insert({
             request_id: requestData.id,
             item_type: item.item_type,
             model: item.model,
             issue_description: formData.issue_description,
           });
+          if (itemError) throw itemError;
         }
       }
 

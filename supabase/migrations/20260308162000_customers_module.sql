@@ -24,6 +24,13 @@ CREATE TABLE IF NOT EXISTS public.customers (
 CREATE INDEX IF NOT EXISTS idx_customers_phone ON public.customers USING btree (phone);
 CREATE INDEX IF NOT EXISTS idx_customers_name ON public.customers USING btree (name);
 
+-- The original service schemas predate customer linking. Add these columns
+-- before installing the sync triggers below; this is safe for existing data.
+ALTER TABLE public.service_tickets
+  ADD COLUMN IF NOT EXISTS customer_id uuid REFERENCES public.customers(id) ON DELETE SET NULL;
+ALTER TABLE public.home_service_requests
+  ADD COLUMN IF NOT EXISTS customer_id uuid REFERENCES public.customers(id) ON DELETE SET NULL;
+
 -- ----------------------------
 -- RLS (admin-only)
 -- ----------------------------
